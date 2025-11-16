@@ -151,9 +151,9 @@ def execute_joint_path(robot_id, path, speed_factor=1.0):
             )
         
         # Step simulation (more steps per waypoint for stability)
-        for _ in range(10):
+        for _ in range(20):
             p.stepSimulation()
-            # time.sleep(1./240.)
+            # time.sleep(1./240.)  # 240 Hz update rate for visible motion
     
     return True
 
@@ -203,7 +203,7 @@ def move_to_position(robot_id, target_pos, target_orn=None, obstacle_ids=[], spe
     Args:
         robot_id: PyBullet body ID of the robot
         target_pos: [x, y, z] target position
-        target_orn: Target orientation (quaternion), default is [pi, 0, 0]
+        target_orn: Target orientation (quaternion), default points straight down (-Z direction)
         obstacle_ids: List of obstacle body IDs to avoid
         speed_factor: Speed multiplier for motion
     
@@ -211,7 +211,9 @@ def move_to_position(robot_id, target_pos, target_orn=None, obstacle_ids=[], spe
         bool: True if reached target, False otherwise
     """
     if target_orn is None:
-        target_orn = p.getQuaternionFromEuler([np.pi, 0, 0])
+        # End-effector points straight down at XY plane (along -Z axis)
+        # Roll=0, Pitch=0, Yaw=0 with end-effector naturally pointing down
+        target_orn = p.getQuaternionFromEuler([0, np.pi/2, 0])
     
     # Plan collision-free path
     success, path = plan_collision_free_path(
