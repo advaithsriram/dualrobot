@@ -79,7 +79,7 @@ for i in range(6):
 # 4️⃣ Create a small cube to pick up
 cube_size = 0.04
 table_top_z = table_height + 0.02
-cube_position = [0.1, 0.1, table_top_z + cube_size/2 + 0.001]
+cube_position = [0.8, -0.3, table_top_z + cube_size/2 + 0.001]
 cube = create_graspable_cube(
     position=cube_position,
     size=cube_size,

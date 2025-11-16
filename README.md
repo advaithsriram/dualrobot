@@ -20,4 +20,6 @@ cd /Users/advaithsriram/cynlr-dualrobot/scripts && /opt/miniconda3/envs/cynlr/bi
 Nov 13th Thursday: Circle working, UR5 URDF running and on a table. Able to move in a circular trajectory. Lissajous curve not working.
 
 ## For Reference:
-initial_positions = [0, -90, 90, 180, -90, 0]
+initial_positions = [0, -90, 90, 180, -90, 0] #works
+cube_position = [0.8, -0.3, table_top_z + cube_size/2 + 0.001] #works
+

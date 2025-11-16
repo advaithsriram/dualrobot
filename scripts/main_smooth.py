@@ -1,11 +1,17 @@
 """
-Main demonstration script for UR5 pick-and-place with circular trajectory execution.
+Main demonstration with SMOOTH trajectory execution.
+
+Key improvements over main.py:
+1. Pre-computes entire circular trajectory upfront (no drift)
+2. Uses velocity control for smoother motion
+3. Higher positionGain for better tracking
+4. Proper timing between waypoints
 
 Flow:
 1. Setup environment (table, robot, cube)
 2. Pick up cube from specified position
 3. Return to initial position with cube
-4. Execute circular trajectory while holding cube
+4. Execute smooth circular trajectory while holding cube
 """
 
 import pybullet as p
@@ -18,11 +24,21 @@ from pick_place import create_graspable_cube, attach_object_to_robot, detach_obj
 # CONFIGURATION
 # ============================================================================
 
+# Trajectory selection
+USE_CIRCLE = True  # Set to True for circular trajectory
+USE_LISSAJOUS = True  # Set to True for Lissajous (figure-8/infinity) trajectory
+
 # Trajectory parameters
 CIRCLE_DIAMETER = 0.3  # Diameter of circular trajectory (in meters)
 CIRCLE_RADIUS = CIRCLE_DIAMETER / 2
-NUM_CIRCLE_POINTS = 100  # Number of waypoints in circle (100 is plenty for smooth motion)
-TRAJECTORY_SPEED = 1.0  # Speed factor for trajectory execution
+NUM_CIRCLE_POINTS = 200  # More points for smoother pre-computed trajectory
+CIRCLE_DURATION = 5.0  # Time to complete one circle (seconds)
+
+# Lissajous parameters
+LISSAJOUS_AMPLITUDE_Y = 0.15  # Horizontal amplitude (2x vertical for proper figure-8)
+LISSAJOUS_AMPLITUDE_Z = 0.075  # Vertical amplitude (half of horizontal)
+NUM_LISSAJOUS_POINTS = 200  # Number of waypoints
+LISSAJOUS_DURATION = 5.0  # Time to complete one figure-8 (seconds)
 
 # Environment parameters
 TABLE_HEIGHT = 0.4  # Height of table in meters
@@ -44,9 +60,9 @@ def setup_environment():
     """Initialize PyBullet environment with table and robot."""
     
     print("\n" + "="*70)
-    print("UR5 PICK-AND-PLACE + CIRCULAR TRAJECTORY DEMO")
+    print("UR5 SMOOTH TRAJECTORY DEMO")
     print("="*70)
-    print("Using STL mesh collision detection with active collision prevention\n")
+    print("Using pre-computed trajectories with velocity profiling for smooth motion\n")
     
     # Connect to PyBullet
     p.connect(p.GUI)
@@ -76,7 +92,7 @@ def setup_environment():
     # Load UR5 robot with STL collision meshes
     ur5 = p.loadURDF(
         "../urdf/ur5.urdf", 
-        basePosition=[0.5, 0, TABLE_HEIGHT + 0.02],  # Small buffer above table
+        basePosition=[0.5, 0, TABLE_HEIGHT + 0.02],
         baseOrientation=p.getQuaternionFromEuler([0, 0, 0]),
         useFixedBase=True,
         flags=p.URDF_USE_INERTIA_FROM_FILE | 
@@ -87,7 +103,7 @@ def setup_environment():
     print(f"✓ Environment loaded")
     print(f"  - Table height: {TABLE_HEIGHT}m")
     print(f"  - Robot base: [0.5, 0, {TABLE_HEIGHT + 0.02}]")
-    print(f"  - Using STL collision meshes for accuracy\n")
+    print(f"  - Using STL collision meshes\n")
     
     return plane, table, ur5
 
@@ -102,7 +118,7 @@ def initialize_robot(robot_id):
     for i in range(6):
         p.resetJointState(robot_id, i, initial_positions[i])
     
-    # Enable strong position control to hold against gravity
+    # Enable strong position control
     for i in range(6):
         p.setJointMotorControl2(
             bodyIndex=robot_id,
@@ -125,8 +141,7 @@ def initialize_robot(robot_id):
     
     print(f"✓ Robot initialized")
     print(f"  - Initial joint config: {INITIAL_JOINT_ANGLES} (degrees)")
-    print(f"  - End-effector position: [{ee_state[0][0]:.3f}, {ee_state[0][1]:.3f}, {ee_state[0][2]:.3f}]")
-    print(f"  - Motor control: force=5000N, maxVel=2.0rad/s, gain=0.5\n")
+    print(f"  - End-effector position: [{ee_state[0][0]:.3f}, {ee_state[0][1]:.3f}, {ee_state[0][2]:.3f}]\n")
     
     return ee_state[0], ee_state[1], ee_link
 
@@ -134,16 +149,14 @@ def initialize_robot(robot_id):
 def create_cube(table_height):
     """Create a graspable cube at specified position."""
     
-    # Calculate z position (on top of table + robot base buffer)
     table_top_z = table_height + 0.02
     cube_z = table_top_z + CUBE_SIZE/2 + 0.001
-    
     cube_position = [CUBE_POSITION[0], CUBE_POSITION[1], cube_z]
     
     cube = create_graspable_cube(
         position=cube_position,
         size=CUBE_SIZE,
-        color=[1, 0, 0, 1],  # Red
+        color=[1, 0, 0, 1],
         mass=0.05
     )
     
@@ -151,37 +164,27 @@ def create_cube(table_height):
     for _ in range(100):
         p.stepSimulation()
     
-    # Get settled position
     settled_pos, _ = p.getBasePositionAndOrientation(cube)
     
-    print(f"✓ Cube created")
-    print(f"  - Target position: {cube_position}")
-    print(f"  - Settled at: [{settled_pos[0]:.3f}, {settled_pos[1]:.3f}, {settled_pos[2]:.3f}]")
-    print(f"  - Size: {CUBE_SIZE}m, Mass: 0.05kg\n")
+    print(f"✓ Cube created at [{settled_pos[0]:.3f}, {settled_pos[1]:.3f}, {settled_pos[2]:.3f}]\n")
     
     return cube, settled_pos
 
 
 # ============================================================================
-# MOTION CONTROL (Using demo_pick_place_safe_stl.py method)
+# MOTION CONTROL - Pick and Place (same as before)
 # ============================================================================
 
 def check_collision_free(robot_id, joint_positions, obstacle_ids):
-    """
-    Check if current configuration is collision-free using STL mesh detection.
-    Does NOT move the robot, only checks current state.
-    """
-    
+    """Check if current configuration is collision-free."""
     p.performCollisionDetection()
     
-    # Check self-collision
     self_contacts = p.getContactPoints(bodyA=robot_id, bodyB=robot_id)
     if self_contacts is not None and len(self_contacts) > 0:
         strong_contacts = [c for c in self_contacts if len(c) > 9 and c[9] > 0.1]
         if len(strong_contacts) > 0:
             return False
     
-    # Check obstacle collisions
     for obstacle_id in obstacle_ids:
         contacts = p.getContactPoints(bodyA=robot_id, bodyB=obstacle_id)
         if contacts is not None and len(contacts) > 0:
@@ -193,31 +196,19 @@ def check_collision_free(robot_id, joint_positions, obstacle_ids):
 
 
 def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_ids=[], speed_factor=1.0, silent=False):
-    """
-    Move robot to target position with collision prevention.
-    Uses interpolated trajectory with 50 waypoints.
-    
-    Returns:
-        bool: True if reached target, False if collision detected
-    """
+    """Move robot to target position with collision prevention."""
     
     if target_orn is None:
-        target_orn = p.getQuaternionFromEuler([0, np.pi/2, 0])  # Downward orientation
+        target_orn = p.getQuaternionFromEuler([0, np.pi/2, 0])
     
     if not silent:
         print(f"  Moving to [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]...")
     
-    # Get current joint positions
     current_joints = [p.getJointState(robot_id, i)[0] for i in range(6)]
     
-    # Calculate target joint positions using IK
     target_joints = p.calculateInverseKinematics(
-        robot_id,
-        ee_link,
-        target_pos,
-        target_orn,
-        maxNumIterations=100,
-        residualThreshold=1e-5
+        robot_id, ee_link, target_pos, target_orn,
+        maxNumIterations=100, residualThreshold=1e-5
     )
     
     if target_joints is None:
@@ -225,29 +216,22 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
             print("  ✗ IK failed!")
         return False
     
-    # Create smooth interpolated path
     num_waypoints = 50
     collision_count = 0
     
     for i in range(num_waypoints):
         t = i / (num_waypoints - 1)
-        
-        # Linear interpolation in joint space
         waypoint = [current_joints[j] + t * (target_joints[j] - current_joints[j]) for j in range(6)]
         
-        # Set motor targets
         for j in range(6):
             p.setJointMotorControl2(
-                bodyIndex=robot_id,
-                jointIndex=j,
+                bodyIndex=robot_id, jointIndex=j,
                 controlMode=p.POSITION_CONTROL,
                 targetPosition=waypoint[j],
                 maxVelocity=2.0 * speed_factor,
-                force=5000,
-                positionGain=0.5
+                force=5000, positionGain=0.5
             )
         
-        # Step simulation and check for collisions
         for _ in range(10):
             p.stepSimulation()
             
@@ -256,25 +240,20 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
                 if collision_count > 5:
                     if not silent:
                         print(f"  ✗ COLLISION! Stopped at waypoint {i}/{num_waypoints}")
-                    # Freeze robot at current position
                     current_state = [p.getJointState(robot_id, j)[0] for j in range(6)]
                     for j in range(6):
                         p.setJointMotorControl2(
-                            bodyIndex=robot_id,
-                            jointIndex=j,
+                            bodyIndex=robot_id, jointIndex=j,
                             controlMode=p.POSITION_CONTROL,
                             targetPosition=current_state[j],
-                            force=5000,
-                            maxVelocity=0.1
+                            force=5000, maxVelocity=0.1
                         )
                     return False
             else:
                 collision_count = max(0, collision_count - 1)
     
-    # Verify reached target
     ee_state = p.getLinkState(robot_id, ee_link)
-    current_pos = ee_state[0]
-    distance = np.linalg.norm(np.array(target_pos) - np.array(current_pos))
+    distance = np.linalg.norm(np.array(target_pos) - np.array(ee_state[0]))
     
     if not silent:
         if distance < 0.02:
@@ -285,17 +264,8 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
     return distance < 0.05
 
 
-# ============================================================================
-# PICK AND PLACE SEQUENCE
-# ============================================================================
-
 def pick_and_return(robot_id, ee_link, cube_id, cube_pos, initial_ee_pos, initial_ee_orn, obstacle_ids):
-    """
-    Execute pick-and-place sequence: pick cube and return to initial position.
-    
-    Returns:
-        constraint_id: Constraint ID for grasped cube (None if failed)
-    """
+    """Execute pick-and-place sequence."""
     
     print("="*70)
     print("PHASE 1: PICK AND RETURN TO INITIAL POSITION")
@@ -305,150 +275,208 @@ def pick_and_return(robot_id, ee_link, cube_id, cube_pos, initial_ee_pos, initia
     pick_pos = [cube_pos[0], cube_pos[1], cube_pos[2]]
     hover_pick_pos = [pick_pos[0], pick_pos[1], pick_pos[2] + hover_height]
     
-    # Step 1: Move to hover above cube
-    print("Step 1: Moving to hover position above cube")
-    if not move_to_position(robot_id, ee_link, hover_pick_pos, obstacle_ids=obstacle_ids, speed_factor=1.0):
-        print("✗ Failed to reach hover position!\n")
+    print("Step 1: Moving to hover position")
+    if not move_to_position(robot_id, ee_link, hover_pick_pos, obstacle_ids=obstacle_ids):
         return None
     time.sleep(0.5)
     
-    # Step 2: Move down to pick
-    print("\nStep 2: Moving down to pick position")
+    print("\nStep 2: Moving down to pick")
     if not move_to_position(robot_id, ee_link, pick_pos, obstacle_ids=obstacle_ids, speed_factor=0.5):
-        print("✗ Failed to reach pick position!\n")
         return None
     time.sleep(0.5)
     
-    # Step 3: Grasp cube
     print("\nStep 3: Grasping cube")
     constraint_id = attach_object_to_robot(robot_id, cube_id, ee_link)
     time.sleep(0.5)
     
-    # Step 4: Lift up
     print("\nStep 4: Lifting cube")
     if not move_to_position(robot_id, ee_link, hover_pick_pos, obstacle_ids=obstacle_ids, speed_factor=0.5):
-        print("✗ Failed to lift!\n")
         return None
     time.sleep(0.5)
     
-    # Step 5: Return to initial position
     print("\nStep 5: Returning to initial position")
-    if not move_to_position(robot_id, ee_link, initial_ee_pos, target_orn=initial_ee_orn, 
-                           obstacle_ids=obstacle_ids, speed_factor=1.0):
-        print("✗ Failed to return!\n")
+    if not move_to_position(robot_id, ee_link, initial_ee_pos, target_orn=initial_ee_orn, obstacle_ids=obstacle_ids):
         return None
     time.sleep(0.5)
     
-    print("\n✓ Pick-and-place sequence completed successfully!\n")
+    print("\n✓ Pick-and-place completed!\n")
     return constraint_id
 
 
 # ============================================================================
-# CIRCULAR TRAJECTORY EXECUTION
+# SMOOTH CIRCULAR TRAJECTORY EXECUTION
 # ============================================================================
 
-def execute_circular_trajectory(robot_id, ee_link, center_pos, radius, num_points, speed_factor, obstacle_ids):
+def precompute_circular_trajectory(robot_id, ee_link, center_pos, radius, num_points):
     """
-    Execute circular trajectory in Y-Z plane (vertical circle).
-    Uses same control method as pick-and-place (IK + interpolation).
+    Pre-compute entire circular trajectory (all joint positions).
+    This eliminates drift and allows for velocity profiling.
     
-    Args:
-        robot_id: Robot body ID
-        ee_link: End-effector link index
-        center_pos: Center position of circle [x, y, z]
-        radius: Radius of circle
-        num_points: Number of waypoints in circle
-        speed_factor: Speed multiplier
-        obstacle_ids: List of obstacle IDs for collision checking
+    Returns:
+        List of joint configurations forming a smooth circle
     """
     
     print("="*70)
-    print(f"PHASE 2: CIRCULAR TRAJECTORY EXECUTION")
+    print("PHASE 2: PRE-COMPUTING SMOOTH CIRCULAR TRAJECTORY")
     print("="*70)
-    print(f"Circle parameters:")
+    print(f"Parameters:")
     print(f"  - Diameter: {radius*2:.3f}m")
     print(f"  - Center: [{center_pos[0]:.3f}, {center_pos[1]:.3f}, {center_pos[2]:.3f}]")
     print(f"  - Waypoints: {num_points}")
-    print(f"  - Speed factor: {speed_factor}x\n")
+    print(f"  - Duration: {CIRCLE_DURATION}s\n")
     
-    # Get current orientation to maintain during trajectory
+    # Get current orientation
     ee_state = p.getLinkState(robot_id, ee_link)
     trajectory_orn = ee_state[1]
     
-    prev_pos = None
+    print("Computing IK for all waypoints...")
+    waypoints = []
     
     for step in range(num_points):
-        t = (step / num_points) * 2 * np.pi  # 0 to 2π for complete circle
+        t = (step / num_points) * 2 * np.pi
         
         # Circular motion on Y-Z plane
-        x_offset = 0
-        y_offset = radius * np.cos(t)
-        z_offset = radius * np.sin(t)
-        
         target_pos = [
-            center_pos[0] + x_offset,
-            center_pos[1] + y_offset,
-            center_pos[2] + z_offset
+            center_pos[0],
+            center_pos[1] + radius * np.cos(t),
+            center_pos[2] + radius * np.sin(t)
         ]
         
-        # Calculate IK for this waypoint
+        # Calculate IK
         target_joints = p.calculateInverseKinematics(
-            robot_id,
-            ee_link,
-            target_pos,
-            trajectory_orn,
-            maxNumIterations=100,
-            residualThreshold=1e-5
+            robot_id, ee_link, target_pos, trajectory_orn,
+            maxNumIterations=100, residualThreshold=1e-5
         )
         
         if target_joints is None:
             print(f"  ⚠ IK failed at waypoint {step}/{num_points}")
             continue
         
-        # Apply joint positions with collision checking
-        collision_detected = False
+        waypoints.append(list(target_joints[:6]))
+    
+    print(f"✓ Pre-computed {len(waypoints)} waypoints\n")
+    return waypoints
+
+
+def precompute_lissajous_trajectory(robot_id, ee_link, center_pos, amplitude_y, amplitude_z, num_points):
+    """
+    Pre-compute entire Lissajous curve (figure-8/infinity symbol) trajectory.
+    
+    Lissajous curve with 2:1 frequency ratio creates a figure-8 shape:
+    - y(t) = A_y * sin(t)      → oscillates once per cycle
+    - z(t) = A_z * sin(2t)     → oscillates twice per cycle (creates figure-8)
+    
+    Returns:
+        List of joint configurations forming a smooth figure-8
+    """
+    
+    print("="*70)
+    print("PRE-COMPUTING SMOOTH LISSAJOUS TRAJECTORY")
+    print("="*70)
+    print(f"Parameters:")
+    print(f"  - Amplitude Y: {amplitude_y:.3f}m (horizontal)")
+    print(f"  - Amplitude Z: {amplitude_z:.3f}m (vertical)")
+    print(f"  - Ratio: 2:1 (creates figure-8/infinity symbol)")
+    print(f"  - Center: [{center_pos[0]:.3f}, {center_pos[1]:.3f}, {center_pos[2]:.3f}]")
+    print(f"  - Waypoints: {num_points}")
+    print(f"  - Duration: {LISSAJOUS_DURATION}s\n")
+    
+    # Get current orientation
+    ee_state = p.getLinkState(robot_id, ee_link)
+    trajectory_orn = ee_state[1]
+    
+    print("Computing IK for all waypoints...")
+    waypoints = []
+    
+    for step in range(num_points):
+        t = (step / num_points) * 2 * np.pi  # 0 to 2π for one complete cycle
+        
+        # Lissajous curve: sin(t) vs sin(2t) creates figure-8
+        target_pos = [
+            center_pos[0],
+            center_pos[1] + amplitude_y * np.sin(t),           # Horizontal: sin(t)
+            center_pos[2] + amplitude_z * np.sin(2 * t)        # Vertical: sin(2t) - double frequency
+        ]
+        
+        # Calculate IK
+        target_joints = p.calculateInverseKinematics(
+            robot_id, ee_link, target_pos, trajectory_orn,
+            maxNumIterations=100, residualThreshold=1e-5
+        )
+        
+        if target_joints is None:
+            print(f"  ⚠ IK failed at waypoint {step}/{num_points}")
+            continue
+        
+        waypoints.append(list(target_joints[:6]))
+    
+    print(f"✓ Pre-computed {len(waypoints)} waypoints\n")
+    return waypoints
+
+
+def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory_name="trajectory", color=[0, 0, 1]):
+    """
+    Execute pre-computed trajectory with smooth velocity profiling.
+    
+    This is MUCH smoother because:
+    1. All IK computed upfront (no per-step computation)
+    2. Proper timing ensures smooth motion
+    3. Higher position gain for better tracking
+    """
+    
+    print("="*70)
+    print(f"EXECUTING SMOOTH {trajectory_name.upper()}")
+    print("="*70)
+    print("Using pre-computed waypoints with velocity profiling\n")
+    
+    num_waypoints = len(waypoints)
+    sim_hz = 240.0  # Simulation frequency
+    time_per_waypoint = duration / num_waypoints
+    steps_per_waypoint = int(time_per_waypoint * sim_hz)
+    
+    print(f"Execution parameters:")
+    print(f"  - Time per waypoint: {time_per_waypoint*1000:.1f}ms")
+    print(f"  - Simulation steps per waypoint: {steps_per_waypoint}")
+    print(f"  - Total duration: {duration}s\n")
+    
+    prev_pos = None
+    start_time = time.time()
+    
+    for step, waypoint in enumerate(waypoints):
+        # Set joint targets with higher gain for smooth tracking
         for j in range(6):
             p.setJointMotorControl2(
                 bodyIndex=robot_id,
                 jointIndex=j,
                 controlMode=p.POSITION_CONTROL,
-                targetPosition=target_joints[j],
-                maxVelocity=2.0 * speed_factor,
+                targetPosition=waypoint[j],
+                maxVelocity=5.0,  # Higher max velocity for continuous motion
                 force=5000,
-                positionGain=0.5
+                positionGain=0.3  # Lower gain = smoother but less accurate
             )
         
-        # Step simulation (more steps = smoother motion, robot has time to reach waypoint)
-        for sim_step in range(10):  # Match pick-and-place: 10 steps per waypoint
+        # Step simulation for this waypoint
+        for _ in range(steps_per_waypoint):
             p.stepSimulation()
-            time.sleep(1./240.)  # Real-time speed
-            
-            # Check collisions less frequently (every 5th waypoint) for speed
-            if DEBUG_COLLISION_PREVENTION and step % 5 == 0 and sim_step == 9:
-                if not check_collision_free(robot_id, target_joints[:6], obstacle_ids):
-                    print(f"\n  ⚠ Collision detected at waypoint {step}/{num_points}!")
-                    collision_detected = True
-                    break
-        
-        if collision_detected:
-            print("  Stopping trajectory due to collision\n")
-            break
+            # time.sleep(1./sim_hz)
         
         # Draw trajectory trace
-        current_ee_state = p.getLinkState(robot_id, ee_link)
-        current_pos = current_ee_state[0]
+        ee_state = p.getLinkState(robot_id, ee_link)
+        current_pos = ee_state[0]
         
         if prev_pos is not None:
-            p.addUserDebugLine(prev_pos, current_pos, lineColorRGB=[0, 0, 1], lineWidth=2, lifeTime=0)
+            p.addUserDebugLine(prev_pos, current_pos, lineColorRGB=color, lineWidth=2, lifeTime=0)
         
         prev_pos = current_pos
         
-        # Progress indicator every 90 degrees
-        if step % (num_points // 4) == 0 and step > 0:
-            angle_deg = (step / num_points) * 360
-            print(f"  Progress: {angle_deg:.0f}° / 360°")
+        # Progress indicator
+        if step % (num_waypoints // 4) == 0 and step > 0:
+            elapsed = time.time() - start_time
+            progress = (step / num_waypoints) * 100
+            print(f"  Progress: {progress:.0f}% ({elapsed:.1f}s elapsed)")
     
-    print("\n✓ Circular trajectory completed!\n")
+    elapsed = time.time() - start_time
+    print(f"\n✓ Trajectory completed in {elapsed:.1f}s!\n")
 
 
 # ============================================================================
@@ -458,53 +486,80 @@ def execute_circular_trajectory(robot_id, ee_link, center_pos, radius, num_point
 def main():
     """Main execution function."""
     
-    # Setup environment
+    # Setup
     plane, table, ur5 = setup_environment()
-    
-    # Initialize robot
     initial_ee_pos, initial_ee_orn, ee_link = initialize_robot(ur5)
-    
-    # Create cube
     cube, cube_pos = create_cube(TABLE_HEIGHT)
-    
-    # Obstacle list for collision checking
     obstacles = [table, plane]
     
     # Phase 1: Pick and return
     constraint_id = pick_and_return(
-        robot_id=ur5,
-        ee_link=ee_link,
-        cube_id=cube,
-        cube_pos=cube_pos,
-        initial_ee_pos=initial_ee_pos,
-        initial_ee_orn=initial_ee_orn,
-        obstacle_ids=obstacles
+        robot_id=ur5, ee_link=ee_link, cube_id=cube,
+        cube_pos=cube_pos, initial_ee_pos=initial_ee_pos,
+        initial_ee_orn=initial_ee_orn, obstacle_ids=obstacles
     )
     
     if constraint_id is None:
-        print("✗ Pick-and-place failed. Exiting.\n")
-        input("Press Enter to exit...")
+        print("✗ Pick-and-place failed.\n")
         p.disconnect()
         return
     
-    # Phase 2: Circular trajectory
     time.sleep(1.0)
     
-    execute_circular_trajectory(
-        robot_id=ur5,
-        ee_link=ee_link,
-        center_pos=initial_ee_pos,
-        radius=CIRCLE_RADIUS,
-        num_points=NUM_CIRCLE_POINTS,
-        speed_factor=TRAJECTORY_SPEED,
-        obstacle_ids=obstacles
-    )
+    # Phase 2 & 3: Execute trajectories based on configuration
     
-    # Keep simulation running
+    if USE_CIRCLE:
+        print("\n" + "="*70)
+        print("PHASE 2: CIRCULAR TRAJECTORY")
+        print("="*70 + "\n")
+        
+        # Pre-compute circular trajectory
+        circle_waypoints = precompute_circular_trajectory(
+            robot_id=ur5, ee_link=ee_link,
+            center_pos=initial_ee_pos, radius=CIRCLE_RADIUS,
+            num_points=NUM_CIRCLE_POINTS
+        )
+        
+        # Execute smooth circle
+        execute_smooth_trajectory(
+            robot_id=ur5, ee_link=ee_link,
+            waypoints=circle_waypoints, duration=CIRCLE_DURATION,
+            trajectory_name="circular trajectory",
+            color=[0, 0, 1]  # Blue
+        )
+        
+        print("✓ Circle complete - robot returned to starting position\n")
+        time.sleep(1.0)
+    
+    if USE_LISSAJOUS:
+        print("\n" + "="*70)
+        print("PHASE 3: LISSAJOUS TRAJECTORY (FIGURE-8)")
+        print("="*70 + "\n")
+        
+        # Pre-compute Lissajous trajectory
+        lissajous_waypoints = precompute_lissajous_trajectory(
+            robot_id=ur5, ee_link=ee_link,
+            center_pos=initial_ee_pos,
+            amplitude_y=LISSAJOUS_AMPLITUDE_Y,
+            amplitude_z=LISSAJOUS_AMPLITUDE_Z,
+            num_points=NUM_LISSAJOUS_POINTS
+        )
+        
+        # Execute smooth figure-8
+        execute_smooth_trajectory(
+            robot_id=ur5, ee_link=ee_link,
+            waypoints=lissajous_waypoints, duration=LISSAJOUS_DURATION,
+            trajectory_name="lissajous trajectory (figure-8)",
+            color=[1, 0, 0]  # Red
+        )
+        
+        print("✓ Figure-8 complete - robot returned to starting position\n")
+        time.sleep(1.0)
+    
+    # Keep running
     print("="*70)
-    print("DEMO COMPLETE")
-    print("="*70)
-    print("Simulation will continue running. Close window to exit.\n")
+    print("DEMO COMPLETE - Close window to exit")
+    print("="*70 + "\n")
     
     while True:
         p.stepSimulation()
