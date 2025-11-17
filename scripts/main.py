@@ -136,19 +136,19 @@ class RobotBController:
         
         # Cartesian visual servoing gains (pixels to meters mapping)
         # These map pixel errors to Cartesian displacement
-        self.pixel_to_meter_x = 0.0008  # P-Gain for X
-        self.pixel_to_meter_y = 0.001  # P-Gain for Y 
+        self.pixel_to_meter_x = 0.0005  # P-Gain for X
+        self.pixel_to_meter_y = 0.0005  # P-Gain for Y 
 
-        self.pixel_to_meter_x_d = 0.0008 # D-Gain for X 
-        self.pixel_to_meter_y_d = 0.001 # D-Gain for Y
+        self.pixel_to_meter_x_d = 0.00 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.00 # D-Gain for Y
 
         self.last_error_x_pixels = 0.0
         self.last_error_y_pixels = 0.0
         
         # Depth control based on depth camera
         self.target_depth = None  # Will be set from first detection
-        self.depth_to_meter_z = 0.35 # P-Gain for depth control (reduced for smoother tracking)
-        self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
+        # self.depth_to_meter_z = 0.35 # P-Gain for depth control (reduced for smoother tracking)
+        # self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
         self.last_error_depth = 0.0
         
         # Deadband and filtering parameters
@@ -157,7 +157,7 @@ class RobotBController:
         self.filter_alpha = 0.7  # Low-pass filter: 0=no filter, 1=no smoothing
         self.filtered_error_x = 0.0
         self.filtered_error_y = 0.0
-        self.filtered_error_depth = 0.005
+        # self.filtered_error_depth = 0.005
         
         # Get controllable joints
         self.controllable_joints = []
@@ -202,12 +202,12 @@ class RobotBController:
             pixel_x = self.latest_detection['pixel_x']
             pixel_y = self.latest_detection['pixel_y']
             # area = self.latest_detection['area']
-            depth = self.latest_detection.get('depth', None)
+            # depth = self.latest_detection.get('depth', None)
 
             # Set target depth from first detection (desired distance)
-            if self.target_depth is None and depth is not None:
-                self.target_depth = depth
-                print(f"[Tracking] Target depth set to {depth:.4f} m (initial distance locked)")
+            # if self.target_depth is None and depth is not None:
+                # self.target_depth = depth
+                # print(f"[Tracking] Target depth set to {depth:.4f} m (initial distance locked)")
 
             # Compute pixel error from image center
             error_x_pixels = pixel_x - self.camera_width / 2   # Positive = object right of center
@@ -215,8 +215,8 @@ class RobotBController:
 
             # Compute depth error for Z control
             error_depth = 0.0
-            if depth is not None and self.target_depth is not None:
-                error_depth = depth - self.target_depth  # Positive = object farther away
+            # if depth is not None and self.target_depth is not None:
+                # error_depth = depth - self.target_depth  # Positive = object farther away
 
             # Apply deadband (prevent micro-corrections)
             if abs(error_x_pixels) < self.pixel_deadband:
@@ -229,7 +229,7 @@ class RobotBController:
             # Apply low-pass filter (exponential moving average)
             self.filtered_error_x = self.filter_alpha * error_x_pixels + (1 - self.filter_alpha) * self.filtered_error_x
             self.filtered_error_y = self.filter_alpha * error_y_pixels + (1 - self.filter_alpha) * self.filtered_error_y
-            self.filtered_error_depth = self.filter_alpha * error_depth + (1 - self.filter_alpha) * self.filtered_error_depth
+            # self.filtered_error_depth = self.filter_alpha * error_depth + (1 - self.filter_alpha) * self.filtered_error_depth
 
             # Convert pixel error to Cartesian displacement in camera frame
             # Camera frame: X=right, Y=down, Z=forward
@@ -255,11 +255,11 @@ class RobotBController:
             # Total Y command
             delta_y_camera = p_term_y + d_term_y
 
-            p_term_z = self.depth_to_meter_z * self.filtered_error_depth
-            error_delta_z = self.filtered_error_depth - self.last_error_depth
-            self.last_error_depth = self.filtered_error_depth
-            d_term_z = self.depth_to_meter_z_d * error_delta_z
-            delta_z_camera = p_term_z + d_term_z
+            # p_term_z = self.depth_to_meter_z * self.filtered_error_depth
+            # error_delta_z = self.filtered_error_depth - self.last_error_depth
+            # self.last_error_depth = self.filtered_error_depth
+            # d_term_z = self.depth_to_meter_z_d * error_delta_z
+            # delta_z_camera = p_term_z + d_term_z
 
             # --- END NEW PD LOGIC ---
             # delta_x_camera = self.filtered_error_x * self.pixel_to_meter_x  # Move right if object on right
@@ -276,7 +276,7 @@ class RobotBController:
             rot_matrix = np.array(rot_matrix).reshape(3, 3)
             
             # Camera displacement in camera frame
-            delta_camera_frame = np.array([delta_x_camera, delta_y_camera, delta_z_camera])
+            delta_camera_frame = np.array([delta_x_camera, delta_y_camera, 0])
             
             # Transform to world frame
             delta_world_frame = rot_matrix.dot(delta_camera_frame)
