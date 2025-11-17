@@ -28,7 +28,7 @@ TABLE_HEIGHT = 0.4  # Height of table in meters
 
 # Franka Panda initial joint configuration (radians)
 # Joint order: [base, shoulder, elbow, forearm_roll, wrist1, wrist2, wrist3]
-INITIAL_JOINT_ANGLES = [0, -35, 0, -145, 0, 190, 90]  # degrees, 7 DOF
+INITIAL_JOINT_ANGLES = [0, -45, 0, -135, 0, 180, 90]  # degrees, 7 DOF
 #convert to radians
 INITIAL_JOINT_ANGLES = [np.deg2rad(angle) for angle in INITIAL_JOINT_ANGLES]
 

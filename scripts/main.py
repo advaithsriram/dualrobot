@@ -149,7 +149,7 @@ class RobotBController:
         # Get initial end-effector position and orientation
         ee_state = p.getLinkState(robot_id, ee_link)
         self.target_ee_pos = list(ee_state[0])
-        self.target_ee_orn = ee_state[1]
+        self.initial_ee_orn = ee_state[1]  # Store initial orientation to prevent drift
     
     def control_step(self):
         """Execute one control step for Franka - update camera and track object"""
@@ -208,12 +208,12 @@ class RobotBController:
             self.target_ee_pos[1] = current_pos[1] + delta_world_frame[1]
             self.target_ee_pos[2] = current_pos[2] + delta_world_frame[2]
             
-            # Compute IK to reach target position
+            # Compute IK to reach target position (use INITIAL orientation to prevent drift)
             target_joints = p.calculateInverseKinematics(
                 self.robot_id,
                 self.ee_link,
                 self.target_ee_pos,
-                current_orn,  # Keep orientation constant
+                self.initial_ee_orn,  # Use initial orientation to maintain constant tilt
                 maxNumIterations=20,
                 residualThreshold=1e-4
             )
@@ -275,7 +275,7 @@ def main():
     import robotA
     
     # Create UR5's table and robot
-    ur5_table_height = 0.4
+    ur5_table_height = 0.5
     ur5_table_collision = p.createCollisionShape(
         p.GEOM_BOX, 
         halfExtents=[0.5, 0.5, ur5_table_height/2]
