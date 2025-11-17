@@ -136,19 +136,19 @@ class RobotBController:
         
         # Cartesian visual servoing gains (pixels to meters mapping)
         # These map pixel errors to Cartesian displacement
-        self.pixel_to_meter_x = 0.0006  # ~0.3mm per pixel horizontal
-        self.pixel_to_meter_y = 0.0006  # ~0.3mm per pixel vertical
+        self.pixel_to_meter_x = 0.0008  # P-Gain for X
+        self.pixel_to_meter_y = 0.0008  # P-Gain for Y 
 
-        self.pixel_to_meter_x_d = 0.0005 # D-Gain for X 
-        self.pixel_to_meter_y_d = 0.0005 # D-Gain for Y
+        self.pixel_to_meter_x_d = 0.0006 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.0006 # D-Gain for Y
 
         self.last_error_x_pixels = 0.0
         self.last_error_y_pixels = 0.0
         
         # Depth control based on depth camera
         self.target_depth = None  # Will be set from first detection
-        self.depth_to_meter_z = 0.12 # Gain for depth control (reduced for smoother tracking)
-        self.depth_to_meter_z_d = 0.02 # D-Gain for Depth
+        self.depth_to_meter_z = 0.12 # P-Gain for depth control (reduced for smoother tracking)
+        self.depth_to_meter_z_d = 0.025 # D-Gain for Depth
         self.last_error_depth = 0.0
         
         # Deadband and filtering parameters

@@ -23,3 +23,15 @@ Nov 13th Thursday: Circle working, UR5 URDF running and on a table. Able to move
 initial_positions = [0, -90, 90, 180, -90, 0] #works
 cube_position = [0.8, -0.3, table_top_z + cube_size/2 + 0.001] #works
 
+
+# PD Gains:
+Proportional Gains (P):
+- self.pixel_to_meter_x = 0.0008 # X axis 
+- self.pixel_to_meter_y = 0.0008 # Y axis
+- self.depth_to_meter_z = 0.12 # Z axis
+
+Derivative Gains (D):
+- self.pixel_to_meter_x_d = 0.0006 # X axis
+- self.pixel_to_meter_y_d = 0.0006 # Y axis
+- self.depth_to_meter_z_d = 0.025 # Z axis
+
