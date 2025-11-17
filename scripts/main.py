@@ -14,6 +14,7 @@ import pybullet_data
 import time
 import numpy as np
 import multiprocessing as mp
+import os
 
 # Import robot modules
 import robotB
@@ -135,8 +136,12 @@ class RobotBController:
         
         # Cartesian visual servoing gains (pixels to meters mapping)
         # These map pixel errors to Cartesian displacement
-        self.pixel_to_meter_x = 0.0003  # ~0.3mm per pixel horizontal
-        self.pixel_to_meter_y = 0.0003  # ~0.3mm per pixel vertical
+        self.pixel_to_meter_x = 0.0005  # ~0.3mm per pixel horizontal
+        self.pixel_to_meter_y = 0.0005  # ~0.3mm per pixel vertical
+        
+        # Depth control based on object area
+        self.target_area = None  # Will be set from first detection
+        self.area_to_meter_z = 0.00001  # Gain for depth control (area error to Z displacement)
         
         # Get controllable joints
         self.controllable_joints = []
@@ -150,6 +155,9 @@ class RobotBController:
         ee_state = p.getLinkState(robot_id, ee_link)
         self.target_ee_pos = list(ee_state[0])
         self.initial_ee_orn = ee_state[1]  # Store initial orientation to prevent drift
+        
+        # Trajectory data collection for plotting
+        self.trajectory_data = []
     
     def control_step(self):
         """Execute one control step for Franka - update camera and track object"""
@@ -177,16 +185,26 @@ class RobotBController:
         if self.latest_detection is not None and self.latest_detection['detected']:
             pixel_x = self.latest_detection['pixel_x']
             pixel_y = self.latest_detection['pixel_y']
+            area = self.latest_detection['area']
+            
+            # Set target area from first detection (desired distance)
+            if self.target_area is None:
+                self.target_area = area
+                print(f"[Tracking] Target area set to {area:.0f} px² (initial distance locked)")
             
             # Compute pixel error from image center
             error_x_pixels = pixel_x - self.camera_width / 2   # Positive = object right of center
             error_y_pixels = pixel_y - self.camera_height / 2  # Positive = object below center
+            
+            # Compute area error for depth control
+            error_area = area - self.target_area  # Positive = object closer (bigger)
             
             # Convert pixel error to Cartesian displacement in camera frame
             # Camera frame: X=right, Y=down, Z=forward
             # We want to move end-effector in SAME direction as object to keep it in view
             delta_x_camera = error_x_pixels * self.pixel_to_meter_x  # Move right if object on right
             delta_y_camera = error_y_pixels * self.pixel_to_meter_y  # Move up if object below
+            delta_z_camera = -error_area * self.area_to_meter_z  # Move back if object closer (bigger area)
             
             # Get current end-effector state
             ee_state = p.getLinkState(self.robot_id, self.ee_link)
@@ -198,7 +216,7 @@ class RobotBController:
             rot_matrix = np.array(rot_matrix).reshape(3, 3)
             
             # Camera displacement in camera frame
-            delta_camera_frame = np.array([delta_x_camera, delta_y_camera, 0.0])
+            delta_camera_frame = np.array([delta_x_camera, delta_y_camera, delta_z_camera])
             
             # Transform to world frame
             delta_world_frame = rot_matrix.dot(delta_camera_frame)
@@ -234,10 +252,90 @@ class RobotBController:
             # Debug output every 60 frames (~2 Hz)
             if self.frame_counter % 60 == 0:
                 print(f"[Tracking] Pixel error: ({error_x_pixels:.1f}, {error_y_pixels:.1f}) px, "
-                      f"Cartesian delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
+                      f"Area: {area:.0f}px² (target: {self.target_area:.0f}), "
+                      f"Delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
                       f"{delta_world_frame[2]*1000:.1f}) mm")
+            
+            # Collect trajectory data every 4 frames for plotting
+            if self.frame_counter % 4 == 0:
+                ee_state = p.getLinkState(self.robot_id, self.ee_link)
+                pos = ee_state[0]
+                self.trajectory_data.append([pos[0], pos[1], pos[2]])
         
-        self.frame_counter += 1# ============================================================================
+        self.frame_counter += 1
+
+
+def generate_robotB_trajectory_plots(trajectory_data, output_filename="robotB_trajectory.png"):
+    """Generate trajectory plots for Robot B (Franka Panda) end-effector path."""
+    
+    if len(trajectory_data) == 0:
+        print("No trajectory data to plot for Robot B")
+        return
+    
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+    
+    # Extract data
+    data = np.array(trajectory_data)
+    x_vals = data[:, 0]
+    y_vals = data[:, 1]
+    z_vals = data[:, 2]
+    time_vals = np.arange(len(data)) / 60.0  # Assuming 60 Hz data collection
+    
+    # Create figure with 2-and-1 layout (same as Robot A)
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+    
+    # Plot 1: Y-Z plane (top-left)
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.plot(y_vals, z_vals, 'b-', linewidth=2, label='Tracking path')
+    ax1.plot(y_vals[0], z_vals[0], 'go', markersize=10, label='Start')
+    ax1.plot(y_vals[-1], z_vals[-1], 'ro', markersize=10, label='End')
+    ax1.set_xlabel('Y Position (m)', fontsize=12)
+    ax1.set_ylabel('Z Position (m)', fontsize=12)
+    ax1.set_title('Robot B End-Effector: Y-Z Plane', fontsize=14, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    ax1.axis('equal')
+    
+    # Plot 2: 3D trajectory (top-right)
+    ax2 = fig.add_subplot(gs[0, 1], projection='3d')
+    ax2.plot(x_vals, y_vals, z_vals, 'b-', linewidth=2, label='Tracking path')
+    ax2.plot([x_vals[0]], [y_vals[0]], [z_vals[0]], 'go', markersize=10, label='Start')
+    ax2.plot([x_vals[-1]], [y_vals[-1]], [z_vals[-1]], 'ro', markersize=10, label='End')
+    ax2.set_xlabel('X Position (m)', fontsize=10)
+    ax2.set_ylabel('Y Position (m)', fontsize=10)
+    ax2.set_zlabel('Z Position (m)', fontsize=10)
+    ax2.set_title('Robot B End-Effector: 3D Trajectory', fontsize=14, fontweight='bold')
+    ax2.legend()
+    ax2.locator_params(axis='x', nbins=4)
+    ax2.locator_params(axis='y', nbins=4)
+    ax2.locator_params(axis='z', nbins=4)
+    
+    # Plot 3: X position over time (bottom, spanning full width)
+    ax3 = fig.add_subplot(gs[1, :])
+    ax3.plot(time_vals, x_vals, 'b-', linewidth=2)
+    ax3.set_xlabel('Time (s)', fontsize=12)
+    ax3.set_ylabel('X Position (m)', fontsize=12)
+    ax3.set_title('Robot B End-Effector: X Position vs Time', fontsize=14, fontweight='bold')
+    ax3.grid(True, alpha=0.3)
+    
+    # Add statistics
+    stats_text = f"Total points: {len(data)}\n"
+    stats_text += f"Duration: {time_vals[-1]:.1f}s\n"
+    stats_text += f"X range: [{x_vals.min():.3f}, {x_vals.max():.3f}]m\n"
+    stats_text += f"Y range: [{y_vals.min():.3f}, {y_vals.max():.3f}]m\n"
+    stats_text += f"Z range: [{z_vals.min():.3f}, {z_vals.max():.3f}]m"
+    
+    fig.text(0.02, 0.02, stats_text, fontsize=10, family='monospace',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Save figure
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+    print(f"\n✓ Robot B trajectory plot saved: {output_filename}")
+    plt.close()
+
+# ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
@@ -422,6 +520,16 @@ def main():
     # Generate plots if enabled
     if robotA.PLOT_GRAPHS and len(robotA.trajectory_data) > 0:
         robotA.generate_trajectory_plots()
+    
+    # Generate Robot B trajectory plot
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"robotB_trajectory_{timestamp}.png"
+    graphs_dir = os.path.join(os.path.dirname(__file__), "..", "graphs")
+    os.makedirs(graphs_dir, exist_ok=True)
+    output_path = os.path.join(graphs_dir, filename)
+
+    if len(controller_B.trajectory_data) > 0:
+        generate_robotB_trajectory_plots(controller_B.trajectory_data, output_filename=output_path)
     
     # Disconnect PyBullet
     p.disconnect()

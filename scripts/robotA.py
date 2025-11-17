@@ -58,7 +58,7 @@ INITIAL_JOINT_ANGLES = [0, -90, 90, 180, -90, 0]
 # Debug flags
 DEBUG_COLLISION_PREVENTION = True
 USE_STL_COLLISION_MESHES = False
-PLOT_GRAPHS = False  # Generate and save trajectory plots after simulation
+PLOT_GRAPHS = True  # Generate and save trajectory plots after simulation
 
 NUM_ITER = 50  # IK solver iterations
 
