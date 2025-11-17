@@ -35,3 +35,37 @@ Derivative Gains (D):
 - self.pixel_to_meter_y_d = 0.0006 # Y axis
 - self.depth_to_meter_z_d = 0.025 # Z axis
 
+# V2:
+
+## V2 GAINS
+
+PD Gains:
+X-axis:
+- P-Gain: 0.0008
+- D-Gain: 0.0004
+Y-axis:
+- P-Gain: 0.0008
+- D-Gain: 0.0004
+Z-axis (depth):
+- P-Gain: 0.35
+- D-Gain: 0.04
+
+Low-pass filter alpha:
+- Alpha: 0.5
+
+## V2 RESULTS (MSE, MAE, RMSE)
+
+Tracking Error Metrics:
+- X axis:   MAE=0.01354  MSE=0.00025  RMSE=0.01592
+- Y axis:   MAE=0.01289  MSE=0.00021  RMSE=0.01450
+- Z axis:   MAE=0.01590  MSE=0.00042  RMSE=0.02058 
+
+
+## End effector frame to world frame:
+The PD gains are applied in the robot’s end-effector (camera) frame, which is oriented differently from the world frame. Due to the robot’s configuration and camera mounting, the mapping between camera frame axes and world frame axes is not one-to-one:
+
+The Z axis in the camera frame (depth) primarily affects the X position in the world frame.
+The Y axis in the camera frame affects the Z position in the world frame.
+The X axis in the camera frame affects the Y position in the world frame.
+This means that control actions computed for a given axis in the camera frame result in movement along a different axis in the world frame. This mapping is handled by transforming the desired displacement from the camera frame to the world frame using the end-effector’s rotation matrix.
+

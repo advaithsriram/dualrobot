@@ -667,12 +667,13 @@ def generate_trajectory_plots():
     
     # ========== Plot 2: X-Z Plane (Sinusoidal Wave) ==========
     ax2.set_title('End-Effector Trajectory: X Position Over Time\n(Sinusoidal Motion)', fontsize=12, fontweight='bold')
-    ax2.set_xlabel('Time Step', fontsize=11)
+    ax2.set_xlabel('Time (s)', fontsize=11)
     ax2.set_ylabel('X Position (m)', fontsize=11)
     ax2.grid(True, alpha=0.3, linestyle='--')
     
     # Plot X position over time (shows pure sine wave)
-    time_steps = np.arange(len(x))
+    #assume 60Hz for time steps
+    time_steps = np.arange(len(x)) / 60.0
     ax2.plot(time_steps, x, 'r-', linewidth=1.5, alpha=0.8)
     ax2.plot(time_steps[0], x[0], 'go', markersize=10, label='Start')
     ax2.plot(time_steps[-1], x[-1], 'ro', markersize=10, label='End')

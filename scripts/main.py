@@ -137,10 +137,10 @@ class RobotBController:
         # Cartesian visual servoing gains (pixels to meters mapping)
         # These map pixel errors to Cartesian displacement
         self.pixel_to_meter_x = 0.0008  # P-Gain for X
-        self.pixel_to_meter_y = 0.0008  # P-Gain for Y 
+        self.pixel_to_meter_y = 0.001  # P-Gain for Y 
 
-        self.pixel_to_meter_x_d = 0.0004 # D-Gain for X 
-        self.pixel_to_meter_y_d = 0.0004 # D-Gain for Y
+        self.pixel_to_meter_x_d = 0.0008 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.001 # D-Gain for Y
 
         self.last_error_x_pixels = 0.0
         self.last_error_y_pixels = 0.0
@@ -154,7 +154,7 @@ class RobotBController:
         # Deadband and filtering parameters
         self.pixel_deadband = 7.0  # Don't move if error < 7 pixels
         # self.area_deadband = 20.0  # Don't move in Z if area error < 20 px²
-        self.filter_alpha = 0.5  # Low-pass filter: 0=no filter, 1=no smoothing
+        self.filter_alpha = 0.7  # Low-pass filter: 0=no filter, 1=no smoothing
         self.filtered_error_x = 0.0
         self.filtered_error_y = 0.0
         self.filtered_error_depth = 0.005
@@ -491,6 +491,13 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     plt.close()
 
 def plot_tracking_errors(robotA_data, robotB_data, output_dir="../graphs"):
+    # Calculate error metrics
+    def calc_metrics(error):
+        mae = np.mean(np.abs(error))
+        mse = np.mean(error**2)
+        rmse = np.sqrt(mse)
+        return mae, mse, rmse
+
     """Plot tracking errors (Robot B - Robot A) in x, y, z over time as a 2x1 subplot."""
     import matplotlib.pyplot as plt
     import numpy as np
@@ -517,21 +524,39 @@ def plot_tracking_errors(robotA_data, robotB_data, output_dir="../graphs"):
     error_y = yB - yA
     error_z = zB - zA
 
+
+    mae_x, mse_x, rmse_x = calc_metrics(error_x)
+    mae_y, mse_y, rmse_y = calc_metrics(error_y)
+    mae_z, mse_z, rmse_z = calc_metrics(error_z)
+
+    print("\nTracking Error Metrics:")
+    print(f"X axis:   MAE={mae_x:.5f}  MSE={mse_x:.5f}  RMSE={rmse_x:.5f}")
+    print(f"Y axis:   MAE={mae_y:.5f}  MSE={mse_y:.5f}  RMSE={rmse_y:.5f}")
+    print(f"Z axis:   MAE={mae_z:.5f}  MSE={mse_z:.5f}  RMSE={rmse_z:.5f}")
+
+    print("\nRecommended: RMSE is most useful for penalizing large errors, but MAE is easier to interpret. Use both for a complete picture.")
+
+
+    # Compute absolute errors
+    abs_error_x = np.abs(error_x)
+    abs_error_y = np.abs(error_y)
+    abs_error_z = np.abs(error_z)
+
     fig, axs = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
-    # Top subplot: X and Y error
-    axs[0].plot(time_vals, error_x, 'r-', label='Error in X (B - A)')
-    axs[0].plot(time_vals, error_y, 'b-', label='Error in Y (B - A)')
-    axs[0].set_ylabel('Error (m)', fontsize=12)
-    axs[0].set_title('Tracking Error in X and Y Over Time', fontsize=14, fontweight='bold')
+    # Top subplot: Absolute Y and Z errors
+    axs[0].plot(time_vals, abs_error_y, 'b-', label='|Error in Y| (B - A)')
+    axs[0].plot(time_vals, abs_error_z, 'g-', label='|Error in Z| (B - A)')
+    axs[0].set_xlabel('Time (s)', fontsize=12)
+    axs[0].set_ylabel('Absolute Error Y/Z (m)', fontsize=12)
+    axs[0].set_title('Absolute Tracking Error in Y and Z Over Time', fontsize=14, fontweight='bold')
     axs[0].grid(True, alpha=0.3)
     axs[0].legend(fontsize=11)
 
-    # Bottom subplot: Z error
-    axs[1].plot(time_vals, error_z, 'g-', label='Error in Z (B - A)')
-    axs[1].set_xlabel('Time (s)', fontsize=12)
-    axs[1].set_ylabel('Error (m)', fontsize=12)
-    axs[1].set_title('Tracking Error in Z Over Time', fontsize=14, fontweight='bold')
+    # Bottom subplot: Absolute X error
+    axs[1].plot(time_vals, abs_error_x, 'r-', label='|Error in X| (B - A)')
+    axs[1].set_ylabel('Absolute Error X (m)', fontsize=12)
+    axs[1].set_title('Absolute Tracking Error in X Over Time', fontsize=14, fontweight='bold')
     axs[1].grid(True, alpha=0.3)
     axs[1].legend(fontsize=11)
 

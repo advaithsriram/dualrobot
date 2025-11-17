@@ -2,4 +2,4 @@
 *.pyc
 scripts/__pycache__/*.pyc
 
-graphs/*.png
+# graphs/*.png
