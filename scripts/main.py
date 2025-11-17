@@ -101,7 +101,7 @@ class RobotAController:
                 ee_state = p.getLinkState(self.robot_id, self.ee_link)
                 current_pos = ee_state[0]
                 robotA.trajectory_data.append([
-                    current_pos[0], current_pos[1], current_pos[2], traj_name
+                    current_pos[0], current_pos[1], current_pos[2]
                 ])
             
             # Draw trajectory trace every 3 waypoints (reduce debug line overhead)
@@ -141,7 +141,15 @@ class RobotBController:
         
         # Depth control based on object area
         self.target_area = None  # Will be set from first detection
-        self.area_to_meter_z = 0.00001  # Gain for depth control (area error to Z displacement)
+        self.area_to_meter_z = 0.000005  # Gain for depth control (reduced for smoother tracking)
+        
+        # Deadband and filtering parameters
+        self.pixel_deadband = 5.0  # Don't move if error < 5 pixels
+        self.area_deadband = 200.0  # Don't move in Z if area error < 200 px²
+        self.filter_alpha = 0.3  # Low-pass filter: 0=no filter, 1=no smoothing
+        self.filtered_error_x = 0.0
+        self.filtered_error_y = 0.0
+        self.filtered_error_area = 0.0
         
         # Get controllable joints
         self.controllable_joints = []
@@ -199,12 +207,25 @@ class RobotBController:
             # Compute area error for depth control
             error_area = area - self.target_area  # Positive = object closer (bigger)
             
+            # Apply deadband (prevent micro-corrections)
+            if abs(error_x_pixels) < self.pixel_deadband:
+                error_x_pixels = 0.0
+            if abs(error_y_pixels) < self.pixel_deadband:
+                error_y_pixels = 0.0
+            if abs(error_area) < self.area_deadband:
+                error_area = 0.0
+            
+            # Apply low-pass filter (exponential moving average)
+            self.filtered_error_x = self.filter_alpha * error_x_pixels + (1 - self.filter_alpha) * self.filtered_error_x
+            self.filtered_error_y = self.filter_alpha * error_y_pixels + (1 - self.filter_alpha) * self.filtered_error_y
+            self.filtered_error_area = self.filter_alpha * error_area + (1 - self.filter_alpha) * self.filtered_error_area
+            
             # Convert pixel error to Cartesian displacement in camera frame
             # Camera frame: X=right, Y=down, Z=forward
             # We want to move end-effector in SAME direction as object to keep it in view
-            delta_x_camera = error_x_pixels * self.pixel_to_meter_x  # Move right if object on right
-            delta_y_camera = error_y_pixels * self.pixel_to_meter_y  # Move up if object below
-            delta_z_camera = -error_area * self.area_to_meter_z  # Move back if object closer (bigger area)
+            delta_x_camera = self.filtered_error_x * self.pixel_to_meter_x  # Move right if object on right
+            delta_y_camera = self.filtered_error_y * self.pixel_to_meter_y  # Move up if object below
+            delta_z_camera = -self.filtered_error_area * self.area_to_meter_z  # Move back if object closer (bigger area)
             
             # Get current end-effector state
             ee_state = p.getLinkState(self.robot_id, self.ee_link)
@@ -315,6 +336,8 @@ def generate_robotB_trajectory_plots(trajectory_data, output_filename="robotB_tr
     # Plot 3: X position over time (bottom, spanning full width)
     ax3 = fig.add_subplot(gs[1, :])
     ax3.plot(time_vals, x_vals, 'b-', linewidth=2)
+    ax3.plot(time_vals[0], x_vals[0], 'go', markersize=10, label='Start')
+    ax3.plot(time_vals[-1], x_vals[-1], 'ro', markersize=10, label='End')
     ax3.set_xlabel('Time (s)', fontsize=12)
     ax3.set_ylabel('X Position (m)', fontsize=12)
     ax3.set_title('Robot B End-Effector: X Position vs Time', fontsize=14, fontweight='bold')
@@ -333,6 +356,93 @@ def generate_robotB_trajectory_plots(trajectory_data, output_filename="robotB_tr
     # Save figure
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     print(f"\n✓ Robot B trajectory plot saved: {output_filename}")
+    plt.close()
+
+
+def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename="dual_robot_overlay.png"):
+    """Generate overlay plots showing both Robot A and Robot B trajectories together."""
+    
+    if len(robotA_data) == 0 or len(robotB_data) == 0:
+        print("Insufficient data for overlay plot")
+        return
+    
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+    
+    # Extract Robot A data (format: [x, y, z, trajectory_name])
+    # Need to handle mixed types (floats and strings)
+    xA = np.array([d[0] for d in robotA_data], dtype=float)
+    yA = np.array([d[1] for d in robotA_data], dtype=float)
+    zA = np.array([d[2] for d in robotA_data], dtype=float)
+    timeA = np.arange(len(robotA_data)) / 60.0
+    
+    # Extract Robot B data (format: [x, y, z])
+    dataB = np.array(robotB_data)
+    xB = dataB[:, 0]
+    yB = dataB[:, 1]
+    zB = dataB[:, 2]
+    timeB = np.arange(len(dataB)) / 60.0
+    
+    # Create figure with 2-and-1 layout
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+    
+    # Plot 1: Y-Z plane overlay (top-left)
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.plot(yA, zA, 'b-', linewidth=2, alpha=0.7, label='Robot A (UR5)')
+    ax1.plot(yA[0], zA[0], 'bo', markersize=8)
+    ax1.plot(yB, zB, 'r-', linewidth=2, alpha=0.7, label='Robot B (Franka)')
+    ax1.plot(yB[0], zB[0], 'ro', markersize=8)
+    ax1.set_xlabel('Y Position (m)', fontsize=12)
+    ax1.set_ylabel('Z Position (m)', fontsize=12)
+    ax1.set_title('Dual Robot Overlay: Y-Z Plane', fontsize=14, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(fontsize=11)
+    ax1.axis('equal')
+    
+    # Plot 2: 3D trajectory overlay (top-right)
+    ax2 = fig.add_subplot(gs[0, 1], projection='3d')
+    ax2.plot(xA, yA, zA, 'b-', linewidth=2, alpha=0.7, label='Robot A (UR5)')
+    ax2.plot([xA[0]], [yA[0]], [zA[0]], 'bo', markersize=8)
+    ax2.plot(xB, yB, zB, 'r-', linewidth=2, alpha=0.7, label='Robot B (Franka)')
+    ax2.plot([xB[0]], [yB[0]], [zB[0]], 'ro', markersize=8)
+    ax2.set_xlabel('X Position (m)', fontsize=10)
+    ax2.set_ylabel('Y Position (m)', fontsize=10)
+    ax2.set_zlabel('Z Position (m)', fontsize=10)
+    ax2.set_title('Dual Robot Overlay: 3D Trajectories', fontsize=14, fontweight='bold')
+    ax2.legend(fontsize=10)
+    ax2.locator_params(axis='x', nbins=4)
+    ax2.locator_params(axis='y', nbins=4)
+    ax2.locator_params(axis='z', nbins=4)
+    
+    # Plot 3: X position over time overlay (bottom, spanning full width)
+    ax3 = fig.add_subplot(gs[1, :])
+    ax3.plot(timeA, xA, 'b-', linewidth=2, alpha=0.7, label='Robot A (UR5)')
+    ax3.plot(timeB, xB, 'r-', linewidth=2, alpha=0.7, label='Robot B (Franka)')
+    ax3.set_xlabel('Time (s)', fontsize=12)
+    ax3.set_ylabel('X Position (m)', fontsize=12)
+    ax3.set_title('Dual Robot Overlay: X Position vs Time', fontsize=14, fontweight='bold')
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(fontsize=11)
+    
+    # Add statistics for both robots
+    stats_text = f"Robot A (UR5):\n"
+    stats_text += f"  Points: {len(robotA_data)}, Duration: {timeA[-1]:.1f}s\n"
+    stats_text += f"  X: [{xA.min():.3f}, {xA.max():.3f}]m\n"
+    stats_text += f"  Y: [{yA.min():.3f}, {yA.max():.3f}]m\n"
+    stats_text += f"  Z: [{zA.min():.3f}, {zA.max():.3f}]m\n\n"
+    stats_text += f"Robot B (Franka):\n"
+    stats_text += f"  Points: {len(robotB_data)}, Duration: {timeB[-1]:.1f}s\n"
+    stats_text += f"  X: [{xB.min():.3f}, {xB.max():.3f}]m\n"
+    stats_text += f"  Y: [{yB.min():.3f}, {yB.max():.3f}]m\n"
+    stats_text += f"  Z: [{zB.min():.3f}, {zB.max():.3f}]m"
+    
+    fig.text(0.02, 0.02, stats_text, fontsize=9, family='monospace',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Save figure
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+    print(f"✓ Dual robot overlay plot saved: {output_filename}")
     plt.close()
 
 # ============================================================================
@@ -530,6 +640,12 @@ def main():
 
     if len(controller_B.trajectory_data) > 0:
         generate_robotB_trajectory_plots(controller_B.trajectory_data, output_filename=output_path)
+    
+    # Generate dual robot overlay plot
+    if robotA.PLOT_GRAPHS and len(robotA.trajectory_data) > 0 and len(controller_B.trajectory_data) > 0:
+        overlay_filename = f"dual_robot_overlay_{timestamp}.png"
+        overlay_path = os.path.join(graphs_dir, overlay_filename)
+        generate_overlay_trajectory_plots(robotA.trajectory_data, controller_B.trajectory_data, output_filename=overlay_path)
     
     # Disconnect PyBullet
     p.disconnect()

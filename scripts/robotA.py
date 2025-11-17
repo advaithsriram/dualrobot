@@ -504,8 +504,7 @@ def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory
             trajectory_data.append([
                 current_pos[0],  # x
                 current_pos[1],  # y
-                current_pos[2],  # z
-                trajectory_name  # trajectory type
+                current_pos[2]   # z
             ])
         
         if prev_pos is not None:
@@ -637,10 +636,10 @@ def generate_trajectory_plots():
     print(f"Plots will be saved to: {graphs_dir}\n")
     
     # Convert trajectory data to numpy array for easier processing
-    data = np.array(trajectory_data, dtype=object)
-    x = np.array([d[0] for d in data], dtype=float)
-    y = np.array([d[1] for d in data], dtype=float)
-    z = np.array([d[2] for d in data], dtype=float)
+    data = np.array(trajectory_data)
+    x = data[:, 0]
+    y = data[:, 1]
+    z = data[:, 2]
     
     print(f"Total data points recorded: {len(x)}")
     print(f"X range: [{x.min():.3f}, {x.max():.3f}] m")
@@ -662,10 +661,8 @@ def generate_trajectory_plots():
     
     # Plot complete trajectory in Y-Z plane
     ax1.plot(y, z, 'b-', linewidth=1.5, alpha=0.8)
-    ax1.scatter(y[0], z[0], c='green', s=150, marker='o', 
-               edgecolors='black', linewidths=2, zorder=5, label='Start')
-    ax1.scatter(y[-1], z[-1], c='red', s=150, marker='X', 
-               edgecolors='black', linewidths=2, zorder=5, label='End')
+    ax1.plot(y[0], z[0], 'go', markersize=10, label='Start')
+    ax1.plot(y[-1], z[-1], 'ro', markersize=10, label='End')
     ax1.legend(loc='best', fontsize=10)
     
     # ========== Plot 2: X-Z Plane (Sinusoidal Wave) ==========
@@ -677,10 +674,8 @@ def generate_trajectory_plots():
     # Plot X position over time (shows pure sine wave)
     time_steps = np.arange(len(x))
     ax2.plot(time_steps, x, 'r-', linewidth=1.5, alpha=0.8)
-    ax2.scatter(time_steps[0], x[0], c='green', s=150, marker='o', 
-               edgecolors='black', linewidths=2, zorder=5, label='Start')
-    ax2.scatter(time_steps[-1], x[-1], c='red', s=150, marker='X', 
-               edgecolors='black', linewidths=2, zorder=5, label='End')
+    ax2.plot(time_steps[0], x[0], 'go', markersize=10, label='Start')
+    ax2.plot(time_steps[-1], x[-1], 'ro', markersize=10, label='End')
     ax2.legend(loc='best', fontsize=10)
     
     # ========== Plot 3: 3D Trajectory (XYZ Space) ==========
@@ -697,10 +692,8 @@ def generate_trajectory_plots():
     
     # Plot 3D trajectory
     ax3.plot(x, y, z, 'b-', linewidth=2, alpha=0.7)
-    ax3.scatter(x[0], y[0], z[0], c='green', s=200, marker='o', 
-               edgecolors='black', linewidths=2, zorder=5, label='Start')
-    ax3.scatter(x[-1], y[-1], z[-1], c='red', s=200, marker='X', 
-               edgecolors='black', linewidths=2, zorder=5, label='End')
+    ax3.plot([x[0]], [y[0]], [z[0]], 'go', markersize=10, label='Start')
+    ax3.plot([x[-1]], [y[-1]], [z[-1]], 'ro', markersize=10, label='End')
     ax3.legend(loc='best', fontsize=10)
     
     # Set viewing angle for better perspective
