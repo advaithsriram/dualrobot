@@ -13,9 +13,11 @@ import pybullet as p
 import pybullet_data
 import time
 import numpy as np
+import multiprocessing as mp
 
 # Import robot modules
 import robotB
+import vision_processor
 
 # ============================================================================
 # ROBOT CONTROLLERS (Independent control policies)
@@ -115,18 +117,99 @@ class RobotAController:
 
 
 class RobotBController:
-    """Controller for Franka Panda robot - handles camera tracking"""
+    """Controller for Franka Panda robot - handles vision-based tracking"""
     
-    def __init__(self, robot_id, ee_link):
+    def __init__(self, robot_id, ee_link, image_queue=None, result_queue=None):
         self.robot_id = robot_id
         self.ee_link = ee_link
         self.frame_counter = 0
         
+        # Vision processing queues
+        self.image_queue = image_queue
+        self.result_queue = result_queue
+        self.latest_detection = None
+        
+        # Control parameters
+        self.camera_width = robotB.CAMERA_WIDTH
+        self.camera_height = robotB.CAMERA_HEIGHT
+        
+        # Visual servoing gains (proportional control)
+        self.kp_pan = 0.002   # Pan control gain (base joint rotation)
+        self.kp_tilt = 0.001  # Tilt control gain (shoulder joint)
+        
+        # Get controllable joints
+        self.controllable_joints = []
+        num_joints = p.getNumJoints(robot_id)
+        for i in range(num_joints):
+            joint_info = p.getJointInfo(robot_id, i)
+            if joint_info[2] == p.JOINT_REVOLUTE:  # Only revolute joints
+                self.controllable_joints.append(i)
+        
+        # Current joint positions (for incremental control)
+        self.current_joint_targets = [p.getJointState(robot_id, j)[0] 
+                                      for j in self.controllable_joints[:7]]
+        
     def control_step(self):
-        """Execute one control step for Franka - update camera"""
-        # Update camera every 8 frames (30 Hz effective rate - reduced for performance)
+        """Execute one control step for Franka - update camera and track object"""
+        
+        # Update camera and send to vision processor every 8 frames (30 Hz)
         if self.frame_counter % 8 == 0:
-            robotB.get_camera_image(self.robot_id, self.ee_link)
+            rgb_image = robotB.get_camera_image(self.robot_id, self.ee_link)
+            
+            # Send image to vision processor (non-blocking)
+            if self.image_queue is not None:
+                try:
+                    self.image_queue.put_nowait(rgb_image)
+                except:
+                    pass  # Queue full, skip this frame
+        
+        # Get latest detection result (non-blocking)
+        if self.result_queue is not None:
+            try:
+                while not self.result_queue.empty():
+                    self.latest_detection = self.result_queue.get_nowait()
+            except:
+                pass
+        
+        # Visual servoing control
+        if self.latest_detection is not None and self.latest_detection['detected']:
+            pixel_x = self.latest_detection['pixel_x']
+            pixel_y = self.latest_detection['pixel_y']
+            
+            # Compute error from image center
+            error_x = pixel_x - self.camera_width / 2   # Positive = object right of center
+            error_y = pixel_y - self.camera_height / 2  # Positive = object below center
+            
+            # Proportional control to align camera with object
+            # Joint 0: Base rotation (pan left/right)
+            # Joint 1: Shoulder (tilt up/down)
+            delta_pan = -self.kp_pan * error_x   # Negative to turn towards object
+            delta_tilt = self.kp_tilt * error_y  # Positive to tilt down when object below
+            
+            # Update target positions (incremental control)
+            self.current_joint_targets[0] += delta_pan
+            self.current_joint_targets[1] += delta_tilt
+            
+            # Apply joint limits (safety)
+            self.current_joint_targets[0] = np.clip(self.current_joint_targets[0], -np.pi, np.pi)
+            self.current_joint_targets[1] = np.clip(self.current_joint_targets[1], -np.pi/2, 0)
+            
+            # Send motor commands
+            for i, joint_idx in enumerate(self.controllable_joints[:7]):
+                p.setJointMotorControl2(
+                    bodyIndex=self.robot_id,
+                    jointIndex=joint_idx,
+                    controlMode=p.POSITION_CONTROL,
+                    targetPosition=self.current_joint_targets[i],
+                    force=500,
+                    maxVelocity=1.0,
+                    positionGain=0.3
+                )
+            
+            # Debug output every 60 frames (~2 Hz)
+            if self.frame_counter % 60 == 0:
+                print(f"[Tracking] Error: ({error_x:.1f}, {error_y:.1f}) px, "
+                      f"Control: pan={np.rad2deg(delta_pan):.2f}°, tilt={np.rad2deg(delta_tilt):.2f}°")
         
         self.frame_counter += 1
 
@@ -155,6 +238,8 @@ def main():
     # Performance optimizations: disable shadows and heavy debug visuals
     p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
     p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
+    p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
+    p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
     
     # Load ground plane
     plane = p.loadURDF("plane.urdf")
@@ -260,6 +345,17 @@ def main():
     cycle_count = 0
     max_cycles = 2 if robotA.PLOT_GRAPHS else float('inf')
     
+    # Start vision processing worker (separate process for CV)
+    print("\n" + "="*70)
+    print("STARTING VISION PROCESSOR")
+    print("="*70)
+    vision_process, image_queue, result_queue = vision_processor.start_vision_process(
+        camera_width=robotB.CAMERA_WIDTH,
+        camera_height=robotB.CAMERA_HEIGHT,
+        debug=False  # Set to True for vision debug output
+    )
+    print("✓ Vision processor started in separate process\n")
+    
     # Initialize independent robot controllers
     controller_A = RobotAController(
         robot_id=ur5,
@@ -272,7 +368,9 @@ def main():
     
     controller_B = RobotBController(
         robot_id=panda,
-        ee_link=ee_link
+        ee_link=ee_link,
+        image_queue=image_queue,
+        result_queue=result_queue
     )
     
     print("\n✓ Starting independent robot controllers in unified simulation loop...\n")
@@ -291,6 +389,11 @@ def main():
             
     except KeyboardInterrupt:
         print("\n\nShutting down...")
+    
+    # Cleanup vision processor
+    print("Terminating vision processor...")
+    vision_process.terminate()
+    vision_process.join(timeout=1.0)
     
     # Generate plots if enabled
     if robotA.PLOT_GRAPHS and len(robotA.trajectory_data) > 0:
