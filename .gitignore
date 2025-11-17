@@ -1,3 +1,5 @@
 .DS_Store
 *.pyc
 scripts/__pycache__/*.pyc
+
+graphs/*.png

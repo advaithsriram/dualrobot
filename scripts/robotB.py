@@ -236,21 +236,27 @@ def get_camera_image(robot_id, ee_link):
         farVal=CAMERA_FAR
     )
     
-    # Get camera image (only RGB needed, disable depth/segmentation preview)
-    _, _, rgb_img, _, _ = p.getCameraImage(
+    # Get camera image (RGB and depth)
+    _, _, rgb_img, depth_img, _ = p.getCameraImage(
         width=CAMERA_WIDTH,
         height=CAMERA_HEIGHT,
         viewMatrix=view_matrix,
         projectionMatrix=projection_matrix,
-        renderer=p.ER_BULLET_HARDWARE_OPENGL,
-        flags=p.ER_NO_SEGMENTATION_MASK  # Disable segmentation computation
+        renderer=p.ER_BULLET_HARDWARE_OPENGL
     )
-    
+
     # Convert to numpy array (RGB only)
     rgb_array = np.array(rgb_img, dtype=np.uint8).reshape(CAMERA_HEIGHT, CAMERA_WIDTH, 4)
     rgb_array = rgb_array[:, :, :3]  # Remove alpha channel
-    
-    return rgb_array
+
+    # Convert depth buffer to meters
+    depth_buffer = np.array(depth_img).reshape(CAMERA_HEIGHT, CAMERA_WIDTH)
+    # PyBullet depth buffer is normalized, convert to meters
+    near = CAMERA_NEAR
+    far = CAMERA_FAR
+    depth_meters = far * near / (far - (far - near) * depth_buffer)
+
+    return rgb_array, depth_meters
 
 
 # ============================================================================

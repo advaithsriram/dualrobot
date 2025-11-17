@@ -136,20 +136,28 @@ class RobotBController:
         
         # Cartesian visual servoing gains (pixels to meters mapping)
         # These map pixel errors to Cartesian displacement
-        self.pixel_to_meter_x = 0.0005  # ~0.3mm per pixel horizontal
-        self.pixel_to_meter_y = 0.0005  # ~0.3mm per pixel vertical
+        self.pixel_to_meter_x = 0.0006  # ~0.3mm per pixel horizontal
+        self.pixel_to_meter_y = 0.0006  # ~0.3mm per pixel vertical
+
+        self.pixel_to_meter_x_d = 0.0005 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.0005 # D-Gain for Y
+
+        self.last_error_x_pixels = 0.0
+        self.last_error_y_pixels = 0.0
         
-        # Depth control based on object area
-        self.target_area = None  # Will be set from first detection
-        self.area_to_meter_z = 0.000005  # Gain for depth control (reduced for smoother tracking)
+        # Depth control based on depth camera
+        self.target_depth = None  # Will be set from first detection
+        self.depth_to_meter_z = 0.12 # Gain for depth control (reduced for smoother tracking)
+        self.depth_to_meter_z_d = 0.02 # D-Gain for Depth
+        self.last_error_depth = 0.0
         
         # Deadband and filtering parameters
         self.pixel_deadband = 5.0  # Don't move if error < 5 pixels
-        self.area_deadband = 200.0  # Don't move in Z if area error < 200 px²
-        self.filter_alpha = 0.3  # Low-pass filter: 0=no filter, 1=no smoothing
+        # self.area_deadband = 20.0  # Don't move in Z if area error < 20 px²
+        self.filter_alpha = 0.5  # Low-pass filter: 0=no filter, 1=no smoothing
         self.filtered_error_x = 0.0
         self.filtered_error_y = 0.0
-        self.filtered_error_area = 0.0
+        self.filtered_error_depth = 0.0
         
         # Get controllable joints
         self.controllable_joints = []
@@ -172,12 +180,12 @@ class RobotBController:
         
         # Update camera and send to vision processor every 8 frames (30 Hz)
         if self.frame_counter % 8 == 0:
-            rgb_image = robotB.get_camera_image(self.robot_id, self.ee_link)
-            
-            # Send image to vision processor (non-blocking)
+            rgb_image, depth_array = robotB.get_camera_image(self.robot_id, self.ee_link)
+
+            # Send both RGB and depth to vision processor (non-blocking)
             if self.image_queue is not None:
                 try:
-                    self.image_queue.put_nowait(rgb_image)
+                    self.image_queue.put_nowait((rgb_image, depth_array))
                 except:
                     pass  # Queue full, skip this frame
         
@@ -193,39 +201,70 @@ class RobotBController:
         if self.latest_detection is not None and self.latest_detection['detected']:
             pixel_x = self.latest_detection['pixel_x']
             pixel_y = self.latest_detection['pixel_y']
-            area = self.latest_detection['area']
-            
-            # Set target area from first detection (desired distance)
-            if self.target_area is None:
-                self.target_area = area
-                print(f"[Tracking] Target area set to {area:.0f} px² (initial distance locked)")
-            
+            # area = self.latest_detection['area']
+            depth = self.latest_detection.get('depth', None)
+
+            # Set target depth from first detection (desired distance)
+            if self.target_depth is None and depth is not None:
+                self.target_depth = depth
+                print(f"[Tracking] Target depth set to {depth:.4f} m (initial distance locked)")
+
             # Compute pixel error from image center
             error_x_pixels = pixel_x - self.camera_width / 2   # Positive = object right of center
             error_y_pixels = pixel_y - self.camera_height / 2  # Positive = object below center
-            
-            # Compute area error for depth control
-            error_area = area - self.target_area  # Positive = object closer (bigger)
-            
+
+            # Compute depth error for Z control
+            error_depth = 0.0
+            if depth is not None and self.target_depth is not None:
+                error_depth = depth - self.target_depth  # Positive = object farther away
+
             # Apply deadband (prevent micro-corrections)
             if abs(error_x_pixels) < self.pixel_deadband:
                 error_x_pixels = 0.0
             if abs(error_y_pixels) < self.pixel_deadband:
                 error_y_pixels = 0.0
-            if abs(error_area) < self.area_deadband:
-                error_area = 0.0
-            
+            if abs(error_depth) < 0.002:  # 2mm deadband for depth
+                error_depth = 0.0
+
             # Apply low-pass filter (exponential moving average)
             self.filtered_error_x = self.filter_alpha * error_x_pixels + (1 - self.filter_alpha) * self.filtered_error_x
             self.filtered_error_y = self.filter_alpha * error_y_pixels + (1 - self.filter_alpha) * self.filtered_error_y
-            self.filtered_error_area = self.filter_alpha * error_area + (1 - self.filter_alpha) * self.filtered_error_area
-            
+            self.filtered_error_depth = self.filter_alpha * error_depth + (1 - self.filter_alpha) * self.filtered_error_depth
+
             # Convert pixel error to Cartesian displacement in camera frame
             # Camera frame: X=right, Y=down, Z=forward
             # We want to move end-effector in SAME direction as object to keep it in view
-            delta_x_camera = self.filtered_error_x * self.pixel_to_meter_x  # Move right if object on right
-            delta_y_camera = self.filtered_error_y * self.pixel_to_meter_y  # Move up if object below
-            delta_z_camera = -self.filtered_error_area * self.area_to_meter_z  # Move back if object closer (bigger area)
+
+            # --- X-Axis (Camera Right/Left) ---
+            # P-Term (Proportional)
+            p_term_x = self.pixel_to_meter_x * self.filtered_error_x
+            # D-Term (Derivative)
+            error_delta_x = self.filtered_error_x - self.last_error_x_pixels
+            self.last_error_x_pixels = self.filtered_error_x
+            d_term_x = self.pixel_to_meter_x_d * error_delta_x
+            # Total X command
+            delta_x_camera = p_term_x + d_term_x
+
+            # --- Y-Axis (Camera Up/Down) ---
+            # P-Term (Proportional)
+            p_term_y = self.pixel_to_meter_y * self.filtered_error_y
+            # D-Term (Derivative)
+            error_delta_y = self.filtered_error_y - self.last_error_y_pixels
+            self.last_error_y_pixels = self.filtered_error_y
+            d_term_y = self.pixel_to_meter_y_d * error_delta_y
+            # Total Y command
+            delta_y_camera = p_term_y + d_term_y
+
+            p_term_z = self.depth_to_meter_z * self.filtered_error_depth
+            error_delta_z = self.filtered_error_depth - self.last_error_depth
+            self.last_error_depth = self.filtered_error_depth
+            d_term_z = self.depth_to_meter_z_d * error_delta_z
+            delta_z_camera = p_term_z + d_term_z
+
+            # --- END NEW PD LOGIC ---
+            # delta_x_camera = self.filtered_error_x * self.pixel_to_meter_x  # Move right if object on right
+            # delta_y_camera = self.filtered_error_y * self.pixel_to_meter_y  # Move up if object below
+            # delta_z_camera = self.filtered_error_depth * self.depth_to_meter_z  # Move back if object farther (depth)
             
             # Get current end-effector state
             ee_state = p.getLinkState(self.robot_id, self.ee_link)
@@ -273,15 +312,17 @@ class RobotBController:
             # Debug output every 60 frames (~2 Hz)
             if self.frame_counter % 60 == 0:
                 print(f"[Tracking] Pixel error: ({error_x_pixels:.1f}, {error_y_pixels:.1f}) px, "
-                      f"Area: {area:.0f}px² (target: {self.target_area:.0f}), "
+                      f"[Tracking] Depth error: {error_depth*1000:.1f} mm, "
+                    #   f"Area: {area:.0f}px² (target: {self.target_area:.0f}), "
                       f"Delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
                       f"{delta_world_frame[2]*1000:.1f}) mm")
             
             # Collect trajectory data every 4 frames for plotting
-            if self.frame_counter % 4 == 0:
+            if self.frame_counter % 3 == 0:
                 ee_state = p.getLinkState(self.robot_id, self.ee_link)
                 pos = ee_state[0]
                 self.trajectory_data.append([pos[0], pos[1], pos[2]])
+            
         
         self.frame_counter += 1
 
@@ -375,13 +416,17 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     yA = np.array([d[1] for d in robotA_data], dtype=float)
     zA = np.array([d[2] for d in robotA_data], dtype=float)
     timeA = np.arange(len(robotA_data)) / 60.0
-    
+
+    # Offset X so both start at 0
+    xA_offset = xA - xA[0]
+
     # Extract Robot B data (format: [x, y, z])
     dataB = np.array(robotB_data)
     xB = dataB[:, 0]
     yB = dataB[:, 1]
     zB = dataB[:, 2]
     timeB = np.arange(len(dataB)) / 60.0
+    xB_offset = xB - xB[0]
     
     # Create figure with 2-and-1 layout
     fig = plt.figure(figsize=(16, 12))
@@ -417,8 +462,8 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     
     # Plot 3: X position over time overlay (bottom, spanning full width)
     ax3 = fig.add_subplot(gs[1, :])
-    ax3.plot(timeA, xA, 'b-', linewidth=2, alpha=0.7, label='Robot A (UR5)')
-    ax3.plot(timeB, xB, 'r-', linewidth=2, alpha=0.7, label='Robot B (Franka)')
+    ax3.plot(timeA, xA_offset, 'b-', linewidth=2, alpha=0.7, label='Robot A (UR5)')
+    ax3.plot(timeB, xB_offset, 'r-', linewidth=2, alpha=0.7, label='Robot B (Franka)')
     ax3.set_xlabel('Time (s)', fontsize=12)
     ax3.set_ylabel('X Position (m)', fontsize=12)
     ax3.set_title('Dual Robot Overlay: X Position vs Time', fontsize=14, fontweight='bold')

@@ -120,31 +120,45 @@ def vision_worker(image_queue, result_queue, camera_width, camera_height, debug=
             try:
                 # Clear queue to get only the latest image
                 rgb_image = None
+                depth_array = None
                 while not image_queue.empty():
-                    rgb_image = image_queue.get_nowait()
-                
+                    item = image_queue.get_nowait()
+                    if isinstance(item, tuple) and len(item) == 2:
+                        rgb_image, depth_array = item
+                    else:
+                        rgb_image = item
+                        depth_array = None
+
                 if rgb_image is None:
-                    time.sleep(0.01)  # 10ms sleep if no images
+                    time.sleep(0.01)
                     continue
-                
+
                 # Process image
                 pixel_x, pixel_y, detected, area = detect_red_object(
                     rgb_image, camera_width, camera_height, debug=debug
                 )
-                
+
+                # Get depth at detected centroid
+                depth_value = None
+                if detected and depth_array is not None:
+                    # Clamp indices to valid range
+                    px = int(np.clip(pixel_x, 0, camera_width - 1))
+                    py = int(np.clip(pixel_y, 0, camera_height - 1))
+                    depth_value = float(depth_array[py, px])
+
                 # Send result (non-blocking)
-                # Clear old results to prevent queue buildup
                 while not result_queue.empty():
                     try:
                         result_queue.get_nowait()
                     except:
                         break
-                
+
                 result_queue.put({
                     'pixel_x': pixel_x,
                     'pixel_y': pixel_y,
                     'detected': detected,
                     'area': area,
+                    'depth': depth_value,
                     'timestamp': time.time()
                 })
                 
