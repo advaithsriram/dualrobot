@@ -18,6 +18,8 @@ import pybullet as p
 import pybullet_data
 import time
 import numpy as np
+import os
+import matplotlib.pyplot as plt
 from pick_place import create_graspable_cube, attach_object_to_robot, detach_object
 
 # ============================================================================
@@ -40,6 +42,11 @@ LISSAJOUS_AMPLITUDE_Z = 0.075  # Vertical amplitude (half of horizontal)
 NUM_LISSAJOUS_POINTS = 200  # Number of waypoints
 LISSAJOUS_DURATION = 3.0  # Time to complete one figure-8 (seconds)
 
+# Sinusoidal motion in X-axis (perpendicular to Y-Z plane)
+USE_SINUSOIDAL_X = True  # Enable 3D motion with X-axis oscillation
+SINUSOIDAL_X_AMPLITUDE = 0.08  # Amplitude of back-and-forth motion (meters)
+SINUSOIDAL_X_FREQUENCY = 1.0  # Frequency factor (1.0 = one complete cycle per trajectory)
+
 # Environment parameters
 TABLE_HEIGHT = 0.4  # Height of table in meters
 CUBE_SIZE = 0.04  # Size of cube to pick up
@@ -51,6 +58,11 @@ INITIAL_JOINT_ANGLES = [0, -90, 90, 180, -90, 0]
 # Debug flags
 DEBUG_COLLISION_PREVENTION = True
 USE_STL_COLLISION_MESHES = True
+PLOT_GRAPHS = True  # Generate and save trajectory plots after simulation
+PLOT_GRAPHS = True  # Generate and save trajectory plots after simulation
+
+# Global trajectory data storage
+trajectory_data = []  # Stores [x, y, z, trajectory_type] for each waypoint
 
 # ============================================================================
 # ENVIRONMENT SETUP
@@ -323,7 +335,10 @@ def precompute_circular_trajectory(robot_id, ee_link, center_pos, radius, num_po
     print(f"  - Diameter: {radius*2:.3f}m")
     print(f"  - Center: [{center_pos[0]:.3f}, {center_pos[1]:.3f}, {center_pos[2]:.3f}]")
     print(f"  - Waypoints: {num_points}")
-    print(f"  - Duration: {CIRCLE_DURATION}s\n")
+    print(f"  - Duration: {CIRCLE_DURATION}s")
+    if USE_SINUSOIDAL_X:
+        print(f"  - X-axis sinusoidal: amplitude={SINUSOIDAL_X_AMPLITUDE:.3f}m, freq={SINUSOIDAL_X_FREQUENCY}x")
+    print()
     
     # Get current orientation
     ee_state = p.getLinkState(robot_id, ee_link)
@@ -335,11 +350,16 @@ def precompute_circular_trajectory(robot_id, ee_link, center_pos, radius, num_po
     for step in range(num_points):
         t = (step / num_points) * 2 * np.pi
         
-        # Circular motion on Y-Z plane
+        # Circular motion on Y-Z plane with optional X-axis sinusoidal motion
+        x_offset = 0
+        if USE_SINUSOIDAL_X:
+            # Sinusoidal oscillation in X (perpendicular to circle plane)
+            x_offset = SINUSOIDAL_X_AMPLITUDE * np.sin(SINUSOIDAL_X_FREQUENCY * t)
+        
         target_pos = [
-            center_pos[0],
-            center_pos[1] + radius * np.cos(t),
-            center_pos[2] + radius * np.sin(t)
+            center_pos[0] + x_offset,              # X: sinusoidal back-and-forth
+            center_pos[1] + radius * np.cos(t),    # Y: circle horizontal
+            center_pos[2] + radius * np.sin(t)     # Z: circle vertical
         ]
         
         # Calculate IK
@@ -379,7 +399,10 @@ def precompute_lissajous_trajectory(robot_id, ee_link, center_pos, amplitude_y, 
     print(f"  - Ratio: 2:1 (creates figure-8/infinity symbol)")
     print(f"  - Center: [{center_pos[0]:.3f}, {center_pos[1]:.3f}, {center_pos[2]:.3f}]")
     print(f"  - Waypoints: {num_points}")
-    print(f"  - Duration: {LISSAJOUS_DURATION}s\n")
+    print(f"  - Duration: {LISSAJOUS_DURATION}s")
+    if USE_SINUSOIDAL_X:
+        print(f"  - X-axis sinusoidal: amplitude={SINUSOIDAL_X_AMPLITUDE:.3f}m, freq={SINUSOIDAL_X_FREQUENCY}x")
+    print()
     
     # Get current orientation
     ee_state = p.getLinkState(robot_id, ee_link)
@@ -395,10 +418,16 @@ def precompute_lissajous_trajectory(robot_id, ee_link, center_pos, amplitude_y, 
         # Phase shift by +π/2 makes it start at right side (y=amplitude_y, z=0)
         # Negate z-component to reverse direction (match circle's counter-clockwise flow)
         # This makes it go down-right first instead of down-left
+        
+        # Add sinusoidal motion in X-axis (perpendicular to figure-8 plane)
+        x_offset = 0
+        if USE_SINUSOIDAL_X:
+            x_offset = SINUSOIDAL_X_AMPLITUDE * np.sin(SINUSOIDAL_X_FREQUENCY * t)
+        
         target_pos = [
-            center_pos[0],
-            center_pos[1] + amplitude_y * np.sin(t + np.pi/2),       # Start at right (y=amplitude_y)
-            center_pos[2] - amplitude_z * np.sin(2 * (t + np.pi/2))  # Negated for reversed direction
+            center_pos[0] + x_offset,                                   # X: sinusoidal back-and-forth
+            center_pos[1] + amplitude_y * np.sin(t + np.pi/2),          # Y: figure-8 horizontal
+            center_pos[2] - amplitude_z * np.sin(2 * (t + np.pi/2))     # Z: figure-8 vertical (negated)
         ]
         
         # Calculate IK
@@ -426,6 +455,8 @@ def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory
     2. Proper timing ensures smooth motion
     3. Higher position gain for better tracking
     """
+    
+    global trajectory_data
     
     # print("="*70)
     # print(f"EXECUTING SMOOTH {trajectory_name.upper()}")
@@ -466,6 +497,15 @@ def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory
         # Draw trajectory trace
         ee_state = p.getLinkState(robot_id, ee_link)
         current_pos = ee_state[0]
+        
+        # Store position data for plotting (only for trajectory execution, not pick-and-place)
+        if PLOT_GRAPHS and ("circular" in trajectory_name or "lissajous" in trajectory_name):
+            trajectory_data.append([
+                current_pos[0],  # x
+                current_pos[1],  # y
+                current_pos[2],  # z
+                trajectory_name  # trajectory type
+            ])
         
         if prev_pos is not None:
             p.addUserDebugLine(prev_pos, current_pos, lineColorRGB=color, lineWidth=2, lifeTime=0)
@@ -541,7 +581,9 @@ def main():
     # print("Close window to exit\n")
     
     cycle_count = 0
-    while True:
+    max_cycles = 2 if PLOT_GRAPHS else float('inf')  # Run 2 cycles for plotting, infinite otherwise
+    
+    while cycle_count < max_cycles:
         if USE_CIRCLE and circle_waypoints:
             # print(f"\n[Cycle {cycle_count}] Executing circle...")
             execute_smooth_trajectory(
@@ -562,6 +604,98 @@ def main():
         
         cycle_count += 1
         # print(f"✓ Cycle {cycle_count} complete\n")
+    
+    # Generate plots after simulation
+    if PLOT_GRAPHS and len(trajectory_data) > 0:
+        generate_trajectory_plots()
+    
+    # Disconnect PyBullet
+    p.disconnect()
+
+
+# ============================================================================
+# PLOTTING FUNCTIONS
+# ============================================================================
+
+def generate_trajectory_plots():
+    """
+    Generate and save trajectory plots showing end-effector motion.
+    Creates two plots:
+    1. Y-Z plane: Shows overall trajectory pattern (circle + Lissajous combined)
+    2. X-Z plane: Shows sinusoidal wave motion perpendicular to main trajectories
+    """
+    
+    print("\n" + "="*70)
+    print("GENERATING TRAJECTORY PLOTS")
+    print("="*70)
+    
+    # Create graphs directory if it doesn't exist
+    graphs_dir = os.path.join(os.path.dirname(__file__), "..", "graphs")
+    os.makedirs(graphs_dir, exist_ok=True)
+    print(f"Plots will be saved to: {graphs_dir}\n")
+    
+    # Convert trajectory data to numpy array for easier processing
+    data = np.array(trajectory_data, dtype=object)
+    x = np.array([d[0] for d in data], dtype=float)
+    y = np.array([d[1] for d in data], dtype=float)
+    z = np.array([d[2] for d in data], dtype=float)
+    
+    print(f"Total data points recorded: {len(x)}")
+    print(f"X range: [{x.min():.3f}, {x.max():.3f}] m")
+    print(f"Y range: [{y.min():.3f}, {y.max():.3f}] m")
+    print(f"Z range: [{z.min():.3f}, {z.max():.3f}] m\n")
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # ========== Plot 1: Y-Z Plane (Circle and Lissajous Combined) ==========
+    ax1.set_title('End-Effector Trajectory: Y-Z Plane\n(Circle + Lissajous Combined)', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Y Position (m)', fontsize=11)
+    ax1.set_ylabel('Z Position (m)', fontsize=11)
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.set_aspect('equal', adjustable='box')
+    
+    # Plot complete trajectory in Y-Z plane
+    ax1.plot(y, z, 'b-', linewidth=1.5, alpha=0.8)
+    ax1.scatter(y[0], z[0], c='green', s=150, marker='o', 
+               edgecolors='black', linewidths=2, zorder=5, label='Start')
+    ax1.scatter(y[-1], z[-1], c='red', s=150, marker='X', 
+               edgecolors='black', linewidths=2, zorder=5, label='End')
+    ax1.legend(loc='best', fontsize=10)
+    
+    # ========== Plot 2: X-Z Plane (Sinusoidal Wave) ==========
+    ax2.set_title('End-Effector Trajectory: X Position Over Time\n(Sinusoidal Motion)', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Time Step', fontsize=11)
+    ax2.set_ylabel('X Position (m)', fontsize=11)
+    ax2.grid(True, alpha=0.3, linestyle='--')
+    
+    # Plot X position over time (shows pure sine wave)
+    time_steps = np.arange(len(x))
+    ax2.plot(time_steps, x, 'r-', linewidth=1.5, alpha=0.8)
+    ax2.scatter(time_steps[0], x[0], c='green', s=150, marker='o', 
+               edgecolors='black', linewidths=2, zorder=5, label='Start')
+    ax2.scatter(time_steps[-1], x[-1], c='red', s=150, marker='X', 
+               edgecolors='black', linewidths=2, zorder=5, label='End')
+    ax2.legend(loc='best', fontsize=10)
+    
+    # Add overall title
+    fig.suptitle('UR5 Robot End-Effector 3D Trajectory Analysis', fontsize=14, fontweight='bold', y=0.98)
+    
+    # Adjust layout
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    
+    # Save plot
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"trajectory_analysis_{timestamp}.png"
+    filepath = os.path.join(graphs_dir, filename)
+    plt.savefig(filepath, dpi=300, bbox_inches='tight')
+    print(f"✓ Plot saved: {filename}")
+    print(f"  - Y-Z Plane: Shows combined circle and Lissajous (∞) patterns")
+    print(f"  - X Position vs Time: Shows sinusoidal wave (back-and-forth motion)")
+    print("="*70 + "\n")
+    
+    # Close the plot to free memory
+    plt.close()
 
 
 if __name__ == "__main__":
