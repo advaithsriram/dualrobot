@@ -59,7 +59,6 @@ INITIAL_JOINT_ANGLES = [0, -90, 90, 180, -90, 0]
 DEBUG_COLLISION_PREVENTION = True
 USE_STL_COLLISION_MESHES = True
 PLOT_GRAPHS = True  # Generate and save trajectory plots after simulation
-PLOT_GRAPHS = True  # Generate and save trajectory plots after simulation
 
 # Global trajectory data storage
 trajectory_data = []  # Stores [x, y, z, trajectory_type] for each waypoint
@@ -581,7 +580,7 @@ def main():
     # print("Close window to exit\n")
     
     cycle_count = 0
-    max_cycles = 2 if PLOT_GRAPHS else float('inf')  # Run 2 cycles for plotting, infinite otherwise
+    max_cycles = 1 if PLOT_GRAPHS else float('inf')  # Run 2 cycles for plotting, infinite otherwise
     
     while cycle_count < max_cycles:
         if USE_CIRCLE and circle_waypoints:
@@ -620,9 +619,10 @@ def main():
 def generate_trajectory_plots():
     """
     Generate and save trajectory plots showing end-effector motion.
-    Creates two plots:
+    Creates three plots:
     1. Y-Z plane: Shows overall trajectory pattern (circle + Lissajous combined)
-    2. X-Z plane: Shows sinusoidal wave motion perpendicular to main trajectories
+    2. X position vs time: Shows sinusoidal wave motion
+    3. 3D trajectory: Shows complete 3D path in XYZ space
     """
     
     print("\n" + "="*70)
@@ -645,8 +645,11 @@ def generate_trajectory_plots():
     print(f"Y range: [{y.min():.3f}, {y.max():.3f}] m")
     print(f"Z range: [{z.min():.3f}, {z.max():.3f}] m\n")
     
-    # Create figure with two subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    # Create figure with 2-and-1 layout (Y-Z and 3D on top, X-position on bottom)
+    fig = plt.figure(figsize=(16, 12))
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax3 = fig.add_subplot(2, 2, 2, projection='3d')
+    ax2 = fig.add_subplot(2, 1, 2)
     
     # ========== Plot 1: Y-Z Plane (Circle and Lissajous Combined) ==========
     ax1.set_title('End-Effector Trajectory: Y-Z Plane\n(Circle + Lissajous Combined)', fontsize=12, fontweight='bold')
@@ -678,6 +681,29 @@ def generate_trajectory_plots():
                edgecolors='black', linewidths=2, zorder=5, label='End')
     ax2.legend(loc='best', fontsize=10)
     
+    # ========== Plot 3: 3D Trajectory (XYZ Space) ==========
+    ax3.set_title('End-Effector Trajectory: 3D View\n(Complete XYZ Path)', fontsize=12, fontweight='bold')
+    ax3.set_xlabel('X Position (m)', fontsize=11, labelpad=10)
+    ax3.set_ylabel('Y Position (m)', fontsize=11, labelpad=10)
+    ax3.set_zlabel('Z Position (m)', fontsize=11, labelpad=10)
+    ax3.grid(True, alpha=0.3, linestyle='--')
+    
+    # Reduce tick label density (show half the default number of ticks)
+    ax3.locator_params(axis='x', nbins=4)
+    ax3.locator_params(axis='y', nbins=4)
+    ax3.locator_params(axis='z', nbins=4)
+    
+    # Plot 3D trajectory
+    ax3.plot(x, y, z, 'b-', linewidth=2, alpha=0.7)
+    ax3.scatter(x[0], y[0], z[0], c='green', s=200, marker='o', 
+               edgecolors='black', linewidths=2, zorder=5, label='Start')
+    ax3.scatter(x[-1], y[-1], z[-1], c='red', s=200, marker='X', 
+               edgecolors='black', linewidths=2, zorder=5, label='End')
+    ax3.legend(loc='best', fontsize=10)
+    
+    # Set viewing angle for better perspective
+    ax3.view_init(elev=20, azim=45)
+    
     # Add overall title
     fig.suptitle('UR5 Robot End-Effector 3D Trajectory Analysis', fontsize=14, fontweight='bold', y=0.98)
     
@@ -692,6 +718,7 @@ def generate_trajectory_plots():
     print(f"✓ Plot saved: {filename}")
     print(f"  - Y-Z Plane: Shows combined circle and Lissajous (∞) patterns")
     print(f"  - X Position vs Time: Shows sinusoidal wave (back-and-forth motion)")
+    print(f"  - 3D Trajectory: Shows complete XYZ path with spatial visualization")
     print("="*70 + "\n")
     
     # Close the plot to free memory
