@@ -32,13 +32,13 @@ USE_LISSAJOUS = True  # Set to True for Lissajous (figure-8/infinity) trajectory
 CIRCLE_DIAMETER = 0.3  # Diameter of circular trajectory (in meters)
 CIRCLE_RADIUS = CIRCLE_DIAMETER / 2
 NUM_CIRCLE_POINTS = 200  # More points for smoother pre-computed trajectory
-CIRCLE_DURATION = 5.0  # Time to complete one circle (seconds)
+CIRCLE_DURATION = 3.0  # Time to complete one circle (seconds)
 
 # Lissajous parameters
 LISSAJOUS_AMPLITUDE_Y = 0.15  # Horizontal amplitude (2x vertical for proper figure-8)
 LISSAJOUS_AMPLITUDE_Z = 0.075  # Vertical amplitude (half of horizontal)
 NUM_LISSAJOUS_POINTS = 200  # Number of waypoints
-LISSAJOUS_DURATION = 5.0  # Time to complete one figure-8 (seconds)
+LISSAJOUS_DURATION = 3.0  # Time to complete one figure-8 (seconds)
 
 # Environment parameters
 TABLE_HEIGHT = 0.4  # Height of table in meters
@@ -392,10 +392,13 @@ def precompute_lissajous_trajectory(robot_id, ee_link, center_pos, amplitude_y, 
         t = (step / num_points) * 2 * np.pi  # 0 to 2π for one complete cycle
         
         # Lissajous curve: sin(t) vs sin(2t) creates figure-8
+        # Phase shift by +π/2 makes it start at right side (y=amplitude_y, z=0)
+        # Negate z-component to reverse direction (match circle's counter-clockwise flow)
+        # This makes it go down-right first instead of down-left
         target_pos = [
             center_pos[0],
-            center_pos[1] + amplitude_y * np.sin(t),           # Horizontal: sin(t)
-            center_pos[2] + amplitude_z * np.sin(2 * t)        # Vertical: sin(2t) - double frequency
+            center_pos[1] + amplitude_y * np.sin(t + np.pi/2),       # Start at right (y=amplitude_y)
+            center_pos[2] - amplitude_z * np.sin(2 * (t + np.pi/2))  # Negated for reversed direction
         ]
         
         # Calculate IK
@@ -424,20 +427,20 @@ def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory
     3. Higher position gain for better tracking
     """
     
-    print("="*70)
-    print(f"EXECUTING SMOOTH {trajectory_name.upper()}")
-    print("="*70)
-    print("Using pre-computed waypoints with velocity profiling\n")
+    # print("="*70)
+    # print(f"EXECUTING SMOOTH {trajectory_name.upper()}")
+    # print("="*70)
+    # print("Using pre-computed waypoints with velocity profiling\n")
     
     num_waypoints = len(waypoints)
     sim_hz = 240.0  # Simulation frequency
     time_per_waypoint = duration / num_waypoints
     steps_per_waypoint = int(time_per_waypoint * sim_hz)
     
-    print(f"Execution parameters:")
-    print(f"  - Time per waypoint: {time_per_waypoint*1000:.1f}ms")
-    print(f"  - Simulation steps per waypoint: {steps_per_waypoint}")
-    print(f"  - Total duration: {duration}s\n")
+    # print(f"Execution parameters:")
+    # print(f"  - Time per waypoint: {time_per_waypoint*1000:.1f}ms")
+    # print(f"  - Simulation steps per waypoint: {steps_per_waypoint}")
+    # print(f"  - Total duration: {duration}s\n")
     
     prev_pos = None
     start_time = time.time()
@@ -450,7 +453,7 @@ def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory
                 jointIndex=j,
                 controlMode=p.POSITION_CONTROL,
                 targetPosition=waypoint[j],
-                maxVelocity=5.0,  # Higher max velocity for continuous motion
+                maxVelocity=10.0,  # Higher max velocity for continuous motion
                 force=5000,
                 positionGain=0.3  # Lower gain = smoother but less accurate
             )
@@ -458,7 +461,7 @@ def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory
         # Step simulation for this waypoint
         for _ in range(steps_per_waypoint):
             p.stepSimulation()
-            # time.sleep(1./sim_hz)
+            # time.sleep(1./sim_hz)  # Control speed via duration parameter
         
         # Draw trajectory trace
         ee_state = p.getLinkState(robot_id, ee_link)
@@ -470,13 +473,13 @@ def execute_smooth_trajectory(robot_id, ee_link, waypoints, duration, trajectory
         prev_pos = current_pos
         
         # Progress indicator
-        if step % (num_waypoints // 4) == 0 and step > 0:
-            elapsed = time.time() - start_time
-            progress = (step / num_waypoints) * 100
-            print(f"  Progress: {progress:.0f}% ({elapsed:.1f}s elapsed)")
+        # if step % (num_waypoints // 4) == 0 and step > 0:
+        #     elapsed = time.time() - start_time
+        #     progress = (step / num_waypoints) * 100
+        #     print(f"  Progress: {progress:.0f}% ({elapsed:.1f}s elapsed)")
     
-    elapsed = time.time() - start_time
-    print(f"\n✓ Trajectory completed in {elapsed:.1f}s!\n")
+    # elapsed = time.time() - start_time
+    # print(f"\n✓ Trajectory completed in {elapsed:.1f}s!\n")
 
 
 # ============================================================================
@@ -506,37 +509,22 @@ def main():
     
     time.sleep(1.0)
     
-    # Phase 2 & 3: Execute trajectories based on configuration
+    # Phase 2: Pre-compute both trajectories once
+    # print("\n" + "="*70)
+    # print("PHASE 2: PRE-COMPUTING TRAJECTORIES")
+    # print("="*70 + "\n")
+    
+    circle_waypoints = None
+    lissajous_waypoints = None
     
     if USE_CIRCLE:
-        print("\n" + "="*70)
-        print("PHASE 2: CIRCULAR TRAJECTORY")
-        print("="*70 + "\n")
-        
-        # Pre-compute circular trajectory
         circle_waypoints = precompute_circular_trajectory(
             robot_id=ur5, ee_link=ee_link,
             center_pos=initial_ee_pos, radius=CIRCLE_RADIUS,
             num_points=NUM_CIRCLE_POINTS
         )
-        
-        # Execute smooth circle
-        execute_smooth_trajectory(
-            robot_id=ur5, ee_link=ee_link,
-            waypoints=circle_waypoints, duration=CIRCLE_DURATION,
-            trajectory_name="circular trajectory",
-            color=[0, 0, 1]  # Blue
-        )
-        
-        print("✓ Circle complete - robot returned to starting position\n")
-        time.sleep(1.0)
     
     if USE_LISSAJOUS:
-        print("\n" + "="*70)
-        print("PHASE 3: LISSAJOUS TRAJECTORY (FIGURE-8)")
-        print("="*70 + "\n")
-        
-        # Pre-compute Lissajous trajectory
         lissajous_waypoints = precompute_lissajous_trajectory(
             robot_id=ur5, ee_link=ee_link,
             center_pos=initial_ee_pos,
@@ -544,26 +532,36 @@ def main():
             amplitude_z=LISSAJOUS_AMPLITUDE_Z,
             num_points=NUM_LISSAJOUS_POINTS
         )
-        
-        # Execute smooth figure-8
-        execute_smooth_trajectory(
-            robot_id=ur5, ee_link=ee_link,
-            waypoints=lissajous_waypoints, duration=LISSAJOUS_DURATION,
-            trajectory_name="lissajous trajectory (figure-8)",
-            color=[1, 0, 0]  # Red
-        )
-        
-        print("✓ Figure-8 complete - robot returned to starting position\n")
-        time.sleep(1.0)
     
-    # Keep running
-    print("="*70)
-    print("DEMO COMPLETE - Close window to exit")
-    print("="*70 + "\n")
+    # Phase 3: Infinite loop alternating between trajectories
+    # print("="*70)
+    # print("PHASE 3: CONTINUOUS TRAJECTORY EXECUTION")
+    # print("="*70)
+    # print("Alternating between circle (blue) and figure-8 (red)...")
+    # print("Close window to exit\n")
     
+    cycle_count = 0
     while True:
-        p.stepSimulation()
-        time.sleep(1./60.)
+        if USE_CIRCLE and circle_waypoints:
+            # print(f"\n[Cycle {cycle_count}] Executing circle...")
+            execute_smooth_trajectory(
+                robot_id=ur5, ee_link=ee_link,
+                waypoints=circle_waypoints, duration=CIRCLE_DURATION,
+                trajectory_name="circular trajectory",
+                color=[0, 0, 1]  # Blue
+            )
+        
+        if USE_LISSAJOUS and lissajous_waypoints:
+            # print(f"[Cycle {cycle_count}] Executing figure-8...")
+            execute_smooth_trajectory(
+                robot_id=ur5, ee_link=ee_link,
+                waypoints=lissajous_waypoints, duration=LISSAJOUS_DURATION,
+                trajectory_name="lissajous trajectory (figure-8)",
+                color=[1, 0, 0]  # Red
+            )
+        
+        cycle_count += 1
+        # print(f"✓ Cycle {cycle_count} complete\n")
 
 
 if __name__ == "__main__":
