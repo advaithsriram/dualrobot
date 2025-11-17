@@ -31,14 +31,14 @@ USE_CIRCLE = True  # Set to True for circular trajectory
 USE_LISSAJOUS = True  # Set to True for Lissajous (figure-8/infinity) trajectory
 
 # Trajectory parameters
-CIRCLE_DIAMETER = 0.3  # Diameter of circular trajectory (in meters)
+CIRCLE_DIAMETER = 0.25  # Diameter of circular trajectory (in meters)
 CIRCLE_RADIUS = CIRCLE_DIAMETER / 2
 NUM_CIRCLE_POINTS = 200  # More points for smoother pre-computed trajectory
 CIRCLE_DURATION = 3.0  # Time to complete one circle (seconds)
 
 # Lissajous parameters
-LISSAJOUS_AMPLITUDE_Y = 0.15  # Horizontal amplitude (2x vertical for proper figure-8)
-LISSAJOUS_AMPLITUDE_Z = 0.075  # Vertical amplitude (half of horizontal)
+LISSAJOUS_AMPLITUDE_Y = CIRCLE_RADIUS  # Horizontal amplitude (2x vertical for proper figure-8)
+LISSAJOUS_AMPLITUDE_Z = LISSAJOUS_AMPLITUDE_Y / 2  # Vertical amplitude (half of horizontal)
 NUM_LISSAJOUS_POINTS = 200  # Number of waypoints
 LISSAJOUS_DURATION = 3.0  # Time to complete one figure-8 (seconds)
 

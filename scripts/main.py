@@ -139,25 +139,25 @@ class RobotBController:
         self.pixel_to_meter_x = 0.0008  # P-Gain for X
         self.pixel_to_meter_y = 0.0008  # P-Gain for Y 
 
-        self.pixel_to_meter_x_d = 0.0006 # D-Gain for X 
-        self.pixel_to_meter_y_d = 0.0006 # D-Gain for Y
+        self.pixel_to_meter_x_d = 0.0004 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.0004 # D-Gain for Y
 
         self.last_error_x_pixels = 0.0
         self.last_error_y_pixels = 0.0
         
         # Depth control based on depth camera
         self.target_depth = None  # Will be set from first detection
-        self.depth_to_meter_z = 0.12 # P-Gain for depth control (reduced for smoother tracking)
-        self.depth_to_meter_z_d = 0.025 # D-Gain for Depth
+        self.depth_to_meter_z = 0.35 # P-Gain for depth control (reduced for smoother tracking)
+        self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
         self.last_error_depth = 0.0
         
         # Deadband and filtering parameters
-        self.pixel_deadband = 5.0  # Don't move if error < 5 pixels
+        self.pixel_deadband = 7.0  # Don't move if error < 7 pixels
         # self.area_deadband = 20.0  # Don't move in Z if area error < 20 px²
         self.filter_alpha = 0.5  # Low-pass filter: 0=no filter, 1=no smoothing
         self.filtered_error_x = 0.0
         self.filtered_error_y = 0.0
-        self.filtered_error_depth = 0.0
+        self.filtered_error_depth = 0.005
         
         # Get controllable joints
         self.controllable_joints = []
@@ -490,6 +490,62 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     print(f"✓ Dual robot overlay plot saved: {output_filename}")
     plt.close()
 
+def plot_tracking_errors(robotA_data, robotB_data, output_dir="../graphs"):
+    """Plot tracking errors (Robot B - Robot A) in x, y, z over time as a 2x1 subplot."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import os
+    import time
+
+    dataA = np.array(robotA_data)
+    dataB = np.array(robotB_data)
+    n = min(len(dataA), len(dataB))
+    xA = dataA[:n, 0]
+    yA = dataA[:n, 1]
+    zA = dataA[:n, 2]
+    xB = dataB[:n, 0]
+    yB = dataB[:n, 1]
+    zB = dataB[:n, 2]
+    time_vals = np.arange(n) / 60.0  # Assuming 60 Hz data collection
+
+    # Offset X so both start at 0
+    xA_offset = xA - xA[0]
+    xB_offset = xB - xB[0]
+
+    # Calculate tracking errors (Robot B - Robot A)
+    error_x = xB_offset - xA_offset
+    error_y = yB - yA
+    error_z = zB - zA
+
+    fig, axs = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+
+    # Top subplot: X and Y error
+    axs[0].plot(time_vals, error_x, 'r-', label='Error in X (B - A)')
+    axs[0].plot(time_vals, error_y, 'b-', label='Error in Y (B - A)')
+    axs[0].set_ylabel('Error (m)', fontsize=12)
+    axs[0].set_title('Tracking Error in X and Y Over Time', fontsize=14, fontweight='bold')
+    axs[0].grid(True, alpha=0.3)
+    axs[0].legend(fontsize=11)
+
+    # Bottom subplot: Z error
+    axs[1].plot(time_vals, error_z, 'g-', label='Error in Z (B - A)')
+    axs[1].set_xlabel('Time (s)', fontsize=12)
+    axs[1].set_ylabel('Error (m)', fontsize=12)
+    axs[1].set_title('Tracking Error in Z Over Time', fontsize=14, fontweight='bold')
+    axs[1].grid(True, alpha=0.3)
+    axs[1].legend(fontsize=11)
+
+    plt.tight_layout()
+
+    # Save figure
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"tracking_error_{timestamp}.png"
+    output_path = os.path.join(output_dir, filename)
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    print(f"\n✓ Tracking error plot saved: {output_path}")
+    plt.close()
+
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
@@ -565,7 +621,8 @@ def main():
     print("Setting up Robot B (Franka Panda)...")
     # Position 1.5m in front (positive X), rotated 180° to face UR5
     franka_base_x = 0.5 + 1.5  # 1.5m forward from UR5
-    franka_base_pos = [franka_base_x, 0, robotB.TABLE_HEIGHT + 0.02]
+    franka_base_y = 0.2
+    franka_base_pos = [franka_base_x, franka_base_y, robotB.TABLE_HEIGHT + 0.02]
     franka_orientation = [0, 0, np.pi]  # 180° rotation around Z-axis
     
     franka_table, panda, ee_link = robotB.setup_franka_robot(
@@ -691,6 +748,9 @@ def main():
         overlay_filename = f"dual_robot_overlay_{timestamp}.png"
         overlay_path = os.path.join(graphs_dir, overlay_filename)
         generate_overlay_trajectory_plots(robotA.trajectory_data, controller_B.trajectory_data, output_filename=overlay_path)
+
+        # Generate tracking error plot (Robot B - Robot A)
+        plot_tracking_errors(robotA.trajectory_data, controller_B.trajectory_data, output_dir=graphs_dir)
     
     # Disconnect PyBullet
     p.disconnect()
