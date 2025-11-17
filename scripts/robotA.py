@@ -57,8 +57,10 @@ INITIAL_JOINT_ANGLES = [0, -90, 90, 180, -90, 0]
 
 # Debug flags
 DEBUG_COLLISION_PREVENTION = True
-USE_STL_COLLISION_MESHES = True
-PLOT_GRAPHS = True  # Generate and save trajectory plots after simulation
+USE_STL_COLLISION_MESHES = False
+PLOT_GRAPHS = False  # Generate and save trajectory plots after simulation
+
+NUM_ITER = 50  # IK solver iterations
 
 # Global trajectory data storage
 trajectory_data = []  # Stores [x, y, z, trajectory_type] for each waypoint
@@ -100,21 +102,19 @@ def setup_environment():
         basePosition=[0.5, 0, TABLE_HEIGHT/2]
     )
     
-    # Load UR5 robot with STL collision meshes
+    # Load UR5 robot (self-collision disabled for performance)
     ur5 = p.loadURDF(
         "../urdf/ur5.urdf", 
         basePosition=[0.5, 0, TABLE_HEIGHT + 0.02],
         baseOrientation=p.getQuaternionFromEuler([0, 0, 0]),
         useFixedBase=True,
-        flags=p.URDF_USE_INERTIA_FROM_FILE | 
-              p.URDF_USE_SELF_COLLISION |
-              p.URDF_USE_SELF_COLLISION_EXCLUDE_PARENT
+        flags=p.URDF_USE_INERTIA_FROM_FILE
     )
     
     print(f"✓ Environment loaded")
     print(f"  - Table height: {TABLE_HEIGHT}m")
     print(f"  - Robot base: [0.5, 0, {TABLE_HEIGHT + 0.02}]")
-    print(f"  - Using STL collision meshes\n")
+    print(f"  - Self-collision checking disabled (performance optimized)\n")
     
     return plane, table, ur5
 
@@ -219,7 +219,7 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
     
     target_joints = p.calculateInverseKinematics(
         robot_id, ee_link, target_pos, target_orn,
-        maxNumIterations=100, residualThreshold=1e-5
+        maxNumIterations=NUM_ITER, residualThreshold=1e-5
     )
     
     if target_joints is None:
@@ -229,6 +229,8 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
     
     num_waypoints = 50
     collision_count = 0
+    collision_check_interval = 10 # Check collision every 10 simulation steps
+    step_count = 0
     
     for i in range(num_waypoints):
         t = i / (num_waypoints - 1)
@@ -242,26 +244,26 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
                 maxVelocity=2.0 * speed_factor,
                 force=5000, positionGain=0.5
             )
-        
         for _ in range(10):
             p.stepSimulation()
-            
-            if DEBUG_COLLISION_PREVENTION and not check_collision_free(robot_id, waypoint, obstacle_ids):
-                collision_count += 1
-                if collision_count > 5:
-                    if not silent:
-                        print(f"  ✗ COLLISION! Stopped at waypoint {i}/{num_waypoints}")
-                    current_state = [p.getJointState(robot_id, j)[0] for j in range(6)]
-                    for j in range(6):
-                        p.setJointMotorControl2(
-                            bodyIndex=robot_id, jointIndex=j,
-                            controlMode=p.POSITION_CONTROL,
-                            targetPosition=current_state[j],
-                            force=5000, maxVelocity=0.1
-                        )
-                    return False
-            else:
-                collision_count = max(0, collision_count - 1)
+            if step_count % collision_check_interval == 0:
+                if DEBUG_COLLISION_PREVENTION and not check_collision_free(robot_id, waypoint, obstacle_ids):
+                    collision_count += 1
+                    if collision_count > 5:
+                        if not silent:
+                            print(f"  ✗ COLLISION! Stopped at waypoint {i}/{num_waypoints}")
+                        current_state = [p.getJointState(robot_id, j)[0] for j in range(6)]
+                        for j in range(6):
+                            p.setJointMotorControl2(
+                                bodyIndex=robot_id, jointIndex=j,
+                                controlMode=p.POSITION_CONTROL,
+                                targetPosition=current_state[j],
+                                force=5000, maxVelocity=0.1
+                            )
+                        return False
+                else:
+                    collision_count = max(0, collision_count - 1)
+            step_count += 1
     
     ee_state = p.getLinkState(robot_id, ee_link)
     distance = np.linalg.norm(np.array(target_pos) - np.array(ee_state[0]))
@@ -361,10 +363,10 @@ def precompute_circular_trajectory(robot_id, ee_link, center_pos, radius, num_po
             center_pos[2] + radius * np.sin(t)     # Z: circle vertical
         ]
         
-        # Calculate IK
+        # Calculate IK (optimized iteration count for precomputed trajectories)
         target_joints = p.calculateInverseKinematics(
             robot_id, ee_link, target_pos, trajectory_orn,
-            maxNumIterations=100, residualThreshold=1e-5
+            maxNumIterations=NUM_ITER, residualThreshold=1e-5
         )
         
         if target_joints is None:
@@ -429,10 +431,10 @@ def precompute_lissajous_trajectory(robot_id, ee_link, center_pos, amplitude_y, 
             center_pos[2] - amplitude_z * np.sin(2 * (t + np.pi/2))     # Z: figure-8 vertical (negated)
         ]
         
-        # Calculate IK
+        # Calculate IK (optimized iteration count for precomputed trajectories)
         target_joints = p.calculateInverseKinematics(
             robot_id, ee_link, target_pos, trajectory_orn,
-            maxNumIterations=100, residualThreshold=1e-5
+            maxNumIterations=NUM_ITER, residualThreshold=1e-5
         )
         
         if target_joints is None:
