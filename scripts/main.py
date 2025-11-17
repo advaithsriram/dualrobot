@@ -133,9 +133,10 @@ class RobotBController:
         self.camera_width = robotB.CAMERA_WIDTH
         self.camera_height = robotB.CAMERA_HEIGHT
         
-        # Visual servoing gains (proportional control)
-        self.kp_pan = 0.002   # Pan control gain (base joint rotation)
-        self.kp_tilt = 0.001  # Tilt control gain (shoulder joint)
+        # Cartesian visual servoing gains (pixels to meters mapping)
+        # These map pixel errors to Cartesian displacement
+        self.pixel_to_meter_x = 0.0003  # ~0.3mm per pixel horizontal
+        self.pixel_to_meter_y = 0.0003  # ~0.3mm per pixel vertical
         
         # Get controllable joints
         self.controllable_joints = []
@@ -145,10 +146,11 @@ class RobotBController:
             if joint_info[2] == p.JOINT_REVOLUTE:  # Only revolute joints
                 self.controllable_joints.append(i)
         
-        # Current joint positions (for incremental control)
-        self.current_joint_targets = [p.getJointState(robot_id, j)[0] 
-                                      for j in self.controllable_joints[:7]]
-        
+        # Get initial end-effector position and orientation
+        ee_state = p.getLinkState(robot_id, ee_link)
+        self.target_ee_pos = list(ee_state[0])
+        self.target_ee_orn = ee_state[1]
+    
     def control_step(self):
         """Execute one control step for Franka - update camera and track object"""
         
@@ -171,49 +173,71 @@ class RobotBController:
             except:
                 pass
         
-        # Visual servoing control
+        # Cartesian visual servoing control
         if self.latest_detection is not None and self.latest_detection['detected']:
             pixel_x = self.latest_detection['pixel_x']
             pixel_y = self.latest_detection['pixel_y']
             
-            # Compute error from image center
-            error_x = pixel_x - self.camera_width / 2   # Positive = object right of center
-            error_y = pixel_y - self.camera_height / 2  # Positive = object below center
+            # Compute pixel error from image center
+            error_x_pixels = pixel_x - self.camera_width / 2   # Positive = object right of center
+            error_y_pixels = pixel_y - self.camera_height / 2  # Positive = object below center
             
-            # Proportional control to align camera with object
-            # Joint 0: Base rotation (pan left/right)
-            # Joint 1: Shoulder (tilt up/down)
-            delta_pan = -self.kp_pan * error_x   # Negative to turn towards object
-            delta_tilt = self.kp_tilt * error_y  # Positive to tilt down when object below
+            # Convert pixel error to Cartesian displacement in camera frame
+            # Camera frame: X=right, Y=down, Z=forward
+            # We want to move end-effector in SAME direction as object to keep it in view
+            delta_x_camera = error_x_pixels * self.pixel_to_meter_x  # Move right if object on right
+            delta_y_camera = error_y_pixels * self.pixel_to_meter_y  # Move up if object below
             
-            # Update target positions (incremental control)
-            self.current_joint_targets[0] += delta_pan
-            self.current_joint_targets[1] += delta_tilt
+            # Get current end-effector state
+            ee_state = p.getLinkState(self.robot_id, self.ee_link)
+            current_pos = ee_state[0]
+            current_orn = ee_state[1]
             
-            # Apply joint limits (safety)
-            self.current_joint_targets[0] = np.clip(self.current_joint_targets[0], -np.pi, np.pi)
-            self.current_joint_targets[1] = np.clip(self.current_joint_targets[1], -np.pi/2, 0)
+            # Get rotation matrix to transform camera frame to world frame
+            rot_matrix = p.getMatrixFromQuaternion(current_orn)
+            rot_matrix = np.array(rot_matrix).reshape(3, 3)
+            
+            # Camera displacement in camera frame
+            delta_camera_frame = np.array([delta_x_camera, delta_y_camera, 0.0])
+            
+            # Transform to world frame
+            delta_world_frame = rot_matrix.dot(delta_camera_frame)
+            
+            # Update target end-effector position
+            self.target_ee_pos[0] = current_pos[0] + delta_world_frame[0]
+            self.target_ee_pos[1] = current_pos[1] + delta_world_frame[1]
+            self.target_ee_pos[2] = current_pos[2] + delta_world_frame[2]
+            
+            # Compute IK to reach target position
+            target_joints = p.calculateInverseKinematics(
+                self.robot_id,
+                self.ee_link,
+                self.target_ee_pos,
+                current_orn,  # Keep orientation constant
+                maxNumIterations=20,
+                residualThreshold=1e-4
+            )
             
             # Send motor commands
             for i, joint_idx in enumerate(self.controllable_joints[:7]):
-                p.setJointMotorControl2(
-                    bodyIndex=self.robot_id,
-                    jointIndex=joint_idx,
-                    controlMode=p.POSITION_CONTROL,
-                    targetPosition=self.current_joint_targets[i],
-                    force=500,
-                    maxVelocity=1.0,
-                    positionGain=0.3
-                )
+                if i < len(target_joints):
+                    p.setJointMotorControl2(
+                        bodyIndex=self.robot_id,
+                        jointIndex=joint_idx,
+                        controlMode=p.POSITION_CONTROL,
+                        targetPosition=target_joints[i],
+                        force=500,
+                        maxVelocity=1.0,
+                        positionGain=0.3
+                    )
             
             # Debug output every 60 frames (~2 Hz)
             if self.frame_counter % 60 == 0:
-                print(f"[Tracking] Error: ({error_x:.1f}, {error_y:.1f}) px, "
-                      f"Control: pan={np.rad2deg(delta_pan):.2f}°, tilt={np.rad2deg(delta_tilt):.2f}°")
+                print(f"[Tracking] Pixel error: ({error_x_pixels:.1f}, {error_y_pixels:.1f}) px, "
+                      f"Cartesian delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
+                      f"{delta_world_frame[2]*1000:.1f}) mm")
         
-        self.frame_counter += 1
-
-# ============================================================================
+        self.frame_counter += 1# ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
