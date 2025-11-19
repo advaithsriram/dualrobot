@@ -1,13 +1,4 @@
 """
-Main demonstration with SMOOTH trajectory execution.
-
-Key improvements over main.py:
-1. Pre-computes entire circular trajectory upfront (no drift)
-2. Uses velocity control for smoother motion
-3. Higher positionGain for better tracking
-4. Proper timing between waypoints
-
-Flow:
 1. Setup environment (table, robot, cube)
 2. Pick up cube from specified position
 3. Return to initial position with cube

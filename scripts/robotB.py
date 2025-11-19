@@ -1,11 +1,4 @@
 """
-Franka Panda Robot (Robot B) - Vision-Based Tracking
-
-This script loads and controls the Franka Panda robot with a virtual camera
-mounted on the end-effector. The camera will be used to track objects from
-the UR5 robot (robotA) using visual information.
-
-Flow:
 1. Setup environment (table, Franka robot with camera)
 2. Initialize robot to home configuration
 3. Attach virtual camera to end-effector

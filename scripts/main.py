@@ -1,5 +1,5 @@
 """
-Main entry point for dual robot system.
+Main script for dual robot system.
 
 Coordinates:
 - Robot A (UR5): Pick-and-place with 3D trajectory execution

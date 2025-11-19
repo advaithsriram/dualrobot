@@ -1,13 +1,4 @@
 """
-Vision Processor - Red Object Detection and Tracking
-
-This module runs in a separate process to detect red objects in camera images
-and compute their position relative to the camera frame center.
-
-Goal: Detect red cube and provide alignment error for servo control
-Output: (pixel_x, pixel_y, detected) - position of red object centroid
-
-Architecture:
 - Runs independently in multiprocessing.Process
 - Receives RGB images via multiprocessing.Queue
 - Sends back detection results via another Queue
