@@ -20,6 +20,9 @@ import os
 import robotB
 import vision_processor
 
+CAMERA_FREQ = 30.0  # Camera update frequency in Hz
+SIM_HZ = 120.0     # Simulation frequency in Hz
+
 # ============================================================================
 # ROBOT CONTROLLERS (Independent control policies)
 # ============================================================================
@@ -136,18 +139,18 @@ class RobotBController:
         
         # Cartesian visual servoing gains (pixels to meters mapping)
         # These map pixel errors to Cartesian displacement
-        self.pixel_to_meter_x = 0.0008  # P-Gain for X
+        self.pixel_to_meter_x = 0.001  # P-Gain for X
         self.pixel_to_meter_y = 0.001  # P-Gain for Y 
 
-        self.pixel_to_meter_x_d = 0.0008 # D-Gain for X 
-        self.pixel_to_meter_y_d = 0.001 # D-Gain for Y
+        self.pixel_to_meter_x_d = 0.0005 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.0005 # D-Gain for Y
 
         self.last_error_x_pixels = 0.0
         self.last_error_y_pixels = 0.0
         
         # Depth control based on depth camera
         self.target_depth = None  # Will be set from first detection
-        self.depth_to_meter_z = 0.35 # P-Gain for depth control (reduced for smoother tracking)
+        self.depth_to_meter_z = 0.25 # P-Gain for depth control (reduced for smoother tracking)
         self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
         self.last_error_depth = 0.0
         
@@ -178,8 +181,8 @@ class RobotBController:
     def control_step(self):
         """Execute one control step for Franka - update camera and track object"""
         
-        # Update camera and send to vision processor every 8 frames (30 Hz)
-        if self.frame_counter % 8 == 0:
+        # Update camera and send to vision processor every 4 frames (60 Hz)
+        if self.frame_counter % 4 == 0:
             rgb_image, depth_array = robotB.get_camera_image(self.robot_id, self.ee_link)
 
             # Send both RGB and depth to vision processor (non-blocking)
@@ -309,7 +312,7 @@ class RobotBController:
                         positionGain=0.3
                     )
             
-            # Debug output every 60 frames (~2 Hz)
+            # Debug output every 60 frames 
             if self.frame_counter % 60 == 0:
                 print(f"[Tracking] Pixel error: ({error_x_pixels:.1f}, {error_y_pixels:.1f}) px, "
                       f"[Tracking] Depth error: {error_depth*1000:.1f} mm, "
@@ -342,7 +345,7 @@ def generate_robotB_trajectory_plots(trajectory_data, output_filename="robotB_tr
     x_vals = data[:, 0]
     y_vals = data[:, 1]
     z_vals = data[:, 2]
-    time_vals = np.arange(len(data)) / 60.0  # Assuming 60 Hz data collection
+    time_vals = np.arange(len(data)) / CAMERA_FREQ  # 60 Hz data collection
     
     # Create figure with 2-and-1 layout (same as Robot A)
     fig = plt.figure(figsize=(16, 12))
@@ -384,15 +387,15 @@ def generate_robotB_trajectory_plots(trajectory_data, output_filename="robotB_tr
     ax3.set_title('Robot B End-Effector: X Position vs Time', fontsize=14, fontweight='bold')
     ax3.grid(True, alpha=0.3)
     
-    # Add statistics
-    stats_text = f"Total points: {len(data)}\n"
-    stats_text += f"Duration: {time_vals[-1]:.1f}s\n"
-    stats_text += f"X range: [{x_vals.min():.3f}, {x_vals.max():.3f}]m\n"
-    stats_text += f"Y range: [{y_vals.min():.3f}, {y_vals.max():.3f}]m\n"
-    stats_text += f"Z range: [{z_vals.min():.3f}, {z_vals.max():.3f}]m"
+    # # Add statistics
+    # stats_text = f"Total points: {len(data)}\n"
+    # stats_text += f"Duration: {time_vals[-1]:.1f}s\n"
+    # stats_text += f"X range: [{x_vals.min():.3f}, {x_vals.max():.3f}]m\n"
+    # stats_text += f"Y range: [{y_vals.min():.3f}, {y_vals.max():.3f}]m\n"
+    # stats_text += f"Z range: [{z_vals.min():.3f}, {z_vals.max():.3f}]m"
     
-    fig.text(0.02, 0.02, stats_text, fontsize=10, family='monospace',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    # fig.text(0.02, 0.02, stats_text, fontsize=10, family='monospace',
+    #          bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     # Save figure
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
@@ -415,7 +418,7 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     xA = np.array([d[0] for d in robotA_data], dtype=float)
     yA = np.array([d[1] for d in robotA_data], dtype=float)
     zA = np.array([d[2] for d in robotA_data], dtype=float)
-    timeA = np.arange(len(robotA_data)) / 60.0
+    timeA = np.arange(len(robotA_data)) / CAMERA_FREQ
 
     # Offset X so both start at 0
     xA_offset = xA - xA[0]
@@ -425,7 +428,7 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     xB = dataB[:, 0]
     yB = dataB[:, 1]
     zB = dataB[:, 2]
-    timeB = np.arange(len(dataB)) / 60.0
+    timeB = np.arange(len(dataB)) / CAMERA_FREQ
     xB_offset = xB - xB[0]
     
     # Create figure with 2-and-1 layout
@@ -470,20 +473,20 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     ax3.grid(True, alpha=0.3)
     ax3.legend(fontsize=11)
     
-    # Add statistics for both robots
-    stats_text = f"Robot A (UR5):\n"
-    stats_text += f"  Points: {len(robotA_data)}, Duration: {timeA[-1]:.1f}s\n"
-    stats_text += f"  X: [{xA.min():.3f}, {xA.max():.3f}]m\n"
-    stats_text += f"  Y: [{yA.min():.3f}, {yA.max():.3f}]m\n"
-    stats_text += f"  Z: [{zA.min():.3f}, {zA.max():.3f}]m\n\n"
-    stats_text += f"Robot B (Franka):\n"
-    stats_text += f"  Points: {len(robotB_data)}, Duration: {timeB[-1]:.1f}s\n"
-    stats_text += f"  X: [{xB.min():.3f}, {xB.max():.3f}]m\n"
-    stats_text += f"  Y: [{yB.min():.3f}, {yB.max():.3f}]m\n"
-    stats_text += f"  Z: [{zB.min():.3f}, {zB.max():.3f}]m"
+    # # Add statistics for both robots
+    # stats_text = f"Robot A (UR5):\n"
+    # stats_text += f"  Points: {len(robotA_data)}, Duration: {timeA[-1]:.1f}s\n"
+    # stats_text += f"  X: [{xA.min():.3f}, {xA.max():.3f}]m\n"
+    # stats_text += f"  Y: [{yA.min():.3f}, {yA.max():.3f}]m\n"
+    # stats_text += f"  Z: [{zA.min():.3f}, {zA.max():.3f}]m\n\n"
+    # stats_text += f"Robot B (Franka):\n"
+    # stats_text += f"  Points: {len(robotB_data)}, Duration: {timeB[-1]:.1f}s\n"
+    # stats_text += f"  X: [{xB.min():.3f}, {xB.max():.3f}]m\n"
+    # stats_text += f"  Y: [{yB.min():.3f}, {yB.max():.3f}]m\n"
+    # stats_text += f"  Z: [{zB.min():.3f}, {zB.max():.3f}]m"
     
-    fig.text(0.02, 0.02, stats_text, fontsize=9, family='monospace',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    # fig.text(0.02, 0.02, stats_text, fontsize=9, family='monospace',
+    #          bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     # Save figure
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
@@ -513,7 +516,7 @@ def plot_tracking_errors(robotA_data, robotB_data, output_dir="../graphs"):
     xB = dataB[:n, 0]
     yB = dataB[:n, 1]
     zB = dataB[:n, 2]
-    time_vals = np.arange(n) / 60.0  # Assuming 60 Hz data collection
+    time_vals = np.arange(n) / CAMERA_FREQ  # 60 Hz data collection
 
     # Offset X so both start at 0
     xA_offset = xA - xA[0]
@@ -590,8 +593,8 @@ def main():
     physics_client = p.connect(p.GUI)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.setGravity(0, 0, -9.81)
-    p.setPhysicsEngineParameter(fixedTimeStep=1.0/120.0, numSolverIterations=12, numSubSteps=1)
     sim_hz = 240.0
+    p.setPhysicsEngineParameter(fixedTimeStep=1.0/SIM_HZ, numSolverIterations=12, numSubSteps=1)
     
     # Performance optimizations: disable shadows and heavy debug visuals
     p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
@@ -655,6 +658,7 @@ def main():
         base_position=franka_base_pos,
         base_orientation=franka_orientation
     )
+
     
     # ========== Simulation Loop ==========
     print("="*70)
@@ -672,6 +676,7 @@ def main():
         cube_pos=cube_pos, initial_ee_pos=initial_ee_pos,
         initial_ee_orn=initial_ee_orn, obstacle_ids=obstacles
     )
+
     
     if constraint_id is None:
         print("✗ UR5 pick-and-place failed.\n")
@@ -745,6 +750,7 @@ def main():
             
             # Single physics step
             p.stepSimulation()
+            # time.sleep(1.0 / (4*SIM_HZ))
             
     except KeyboardInterrupt:
         print("\n\nShutting down...")

@@ -65,6 +65,9 @@ NUM_ITER = 50  # IK solver iterations
 # Global trajectory data storage
 trajectory_data = []  # Stores [x, y, z, trajectory_type] for each waypoint
 
+CAMERA_FREQ = 60.0  # Camera frequency for time calculations
+SIM_HZ = 120.0  # Simulation frequency for time calculations
+
 # ============================================================================
 # ENVIRONMENT SETUP
 # ============================================================================
@@ -209,6 +212,7 @@ def check_collision_free(robot_id, joint_positions, obstacle_ids):
 def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_ids=[], speed_factor=1.0, silent=False):
     """Move robot to target position with collision prevention."""
     
+
     if target_orn is None:
         target_orn = p.getQuaternionFromEuler([0, np.pi/2, 0])
     
@@ -241,7 +245,7 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
                 bodyIndex=robot_id, jointIndex=j,
                 controlMode=p.POSITION_CONTROL,
                 targetPosition=waypoint[j],
-                maxVelocity=2.0 * speed_factor,
+                maxVelocity=0.5 * speed_factor,
                 force=5000, positionGain=0.5
             )
         for _ in range(10):
@@ -264,6 +268,8 @@ def move_to_position(robot_id, ee_link, target_pos, target_orn=None, obstacle_id
                 else:
                     collision_count = max(0, collision_count - 1)
             step_count += 1
+
+            time.sleep(1.0 / (10*SIM_HZ))
     
     ee_state = p.getLinkState(robot_id, ee_link)
     distance = np.linalg.norm(np.array(target_pos) - np.array(ee_state[0]))
@@ -283,6 +289,7 @@ def pick_and_return(robot_id, ee_link, cube_id, cube_pos, initial_ee_pos, initia
     print("="*70)
     print("PHASE 1: PICK AND RETURN TO INITIAL POSITION")
     print("="*70 + "\n")
+
     
     hover_height = 0.05
     pick_pos = [cube_pos[0], cube_pos[1], cube_pos[2]]
@@ -673,8 +680,8 @@ def generate_trajectory_plots():
     
     # Plot X position over time (shows pure sine wave)
     #assume 60Hz for time steps
-    time_steps = np.arange(len(x)) / 60.0
-    ax2.plot(time_steps, x, 'r-', linewidth=1.5, alpha=0.8)
+    time_steps = np.arange(len(x)) / (CAMERA_FREQ/2)
+    ax2.plot(time_steps, x, 'b-', linewidth=1.5, alpha=0.8)
     ax2.plot(time_steps[0], x[0], 'go', markersize=10, label='Start')
     ax2.plot(time_steps[-1], x[-1], 'ro', markersize=10, label='End')
     ax2.legend(loc='best', fontsize=10)

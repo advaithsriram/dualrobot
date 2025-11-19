@@ -69,3 +69,19 @@ The Y axis in the camera frame affects the Z position in the world frame.
 The X axis in the camera frame affects the Y position in the world frame.
 This means that control actions computed for a given axis in the camera frame result in movement along a different axis in the world frame. This mapping is handled by transforming the desired displacement from the camera frame to the world frame using the end-effector’s rotation matrix.
 
+
+## V3 Results
+Gains:
+self.pixel_to_meter_x = 0.001  # P-Gain for X
+self.pixel_to_meter_y = 0.001  # P-Gain for Y 
+
+self.pixel_to_meter_x_d = 0.0005 # D-Gain for X 
+self.pixel_to_meter_y_d = 0.0005 # D-Gain for Y
+
+self.depth_to_meter_z = 0.25 # P-Gain for depth control (reduced for smoother tracking)
+self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
+
+Tracking Error Metrics:
+X axis:   MAE=0.01689  RMSE=0.02037
+Y axis:   MAE=0.01406  RMSE=0.01542
+Z axis:   MAE=0.01807  RMSE=0.02196
