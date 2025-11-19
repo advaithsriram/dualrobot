@@ -65,7 +65,7 @@ NUM_ITER = 50  # IK solver iterations
 # Global trajectory data storage
 trajectory_data = []  # Stores [x, y, z, trajectory_type] for each waypoint
 
-CAMERA_FREQ = 60.0  # Camera frequency for time calculations
+CAMERA_FREQ = 30.0  # Camera frequency for time calculations
 SIM_HZ = 120.0  # Simulation frequency for time calculations
 
 # ============================================================================
@@ -680,7 +680,7 @@ def generate_trajectory_plots():
     
     # Plot X position over time (shows pure sine wave)
     #assume 60Hz for time steps
-    time_steps = np.arange(len(x)) / (CAMERA_FREQ/2)
+    time_steps = np.arange(len(x)) / (CAMERA_FREQ)
     ax2.plot(time_steps, x, 'b-', linewidth=1.5, alpha=0.8)
     ax2.plot(time_steps[0], x[0], 'go', markersize=10, label='Start')
     ax2.plot(time_steps[-1], x[-1], 'ro', markersize=10, label='End')

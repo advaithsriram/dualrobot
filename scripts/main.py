@@ -22,7 +22,7 @@ import vision_processor
 
 CAMERA_FREQ = 30.0  # Camera update frequency in Hz
 SIM_HZ = 120.0     # Simulation frequency in Hz
-VIDEO_RECORDING = True  # Enable video recording
+VIDEO_RECORDING = False  # Enable video recording
 
 # ============================================================================
 # ROBOT CONTROLLERS (Independent control policies)
@@ -714,7 +714,7 @@ def main():
     
     # Continuous trajectory execution loop
     cycle_count = 0
-    max_cycles = 4 if robotA.PLOT_GRAPHS else float('inf')
+    max_cycles = 2 if robotA.PLOT_GRAPHS else float('inf')
     
     # Start vision processing worker (separate process for CV)
     print("\n" + "="*70)
