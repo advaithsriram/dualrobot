@@ -22,6 +22,7 @@ import vision_processor
 
 CAMERA_FREQ = 30.0  # Camera update frequency in Hz
 SIM_HZ = 120.0     # Simulation frequency in Hz
+VIDEO_RECORDING = True  # Enable video recording
 
 # ============================================================================
 # ROBOT CONTROLLERS (Independent control policies)
@@ -605,6 +606,12 @@ def main():
     # Load ground plane
     plane = p.loadURDF("plane.urdf")
     print("✓ Ground plane loaded\n")
+
+    if VIDEO_RECORDING:
+        # Start video recording
+        video_filename = f"simulation_video_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+        video_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, video_filename)
+        print(f"✓ Video recording started: {video_filename}\n")
     
     # ========== Robot A (UR5) Setup ==========
     print("Setting up Robot A (UR5)...")
@@ -707,7 +714,7 @@ def main():
     
     # Continuous trajectory execution loop
     cycle_count = 0
-    max_cycles = 2 if robotA.PLOT_GRAPHS else float('inf')
+    max_cycles = 4 if robotA.PLOT_GRAPHS else float('inf')
     
     # Start vision processing worker (separate process for CV)
     print("\n" + "="*70)
@@ -783,6 +790,10 @@ def main():
         # Generate tracking error plot (Robot B - Robot A)
         plot_tracking_errors(robotA.trajectory_data, controller_B.trajectory_data, output_dir=graphs_dir)
     
+    if VIDEO_RECORDING:
+        # Stop video recording
+        p.stopStateLogging(video_id)
+        print(f"\n✓ Video recording stopped: {video_filename}\n")
     # Disconnect PyBullet
     p.disconnect()
 
