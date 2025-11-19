@@ -136,11 +136,11 @@ class RobotBController:
         
         # Cartesian visual servoing gains (pixels to meters mapping)
         # These map pixel errors to Cartesian displacement
-        self.pixel_to_meter_x = 0.0005  # P-Gain for X
-        self.pixel_to_meter_y = 0.0005  # P-Gain for Y 
+        self.pixel_to_meter_x = 0.0006  # P-Gain for X
+        self.pixel_to_meter_y = 0.0006  # P-Gain for Y 
 
-        self.pixel_to_meter_x_d = 0.00 # D-Gain for X 
-        self.pixel_to_meter_y_d = 0.00 # D-Gain for Y
+        self.pixel_to_meter_x_d = 0.000 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.000 # D-Gain for Y
 
         self.last_error_x_pixels = 0.0
         self.last_error_y_pixels = 0.0
@@ -415,7 +415,7 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     xA = np.array([d[0] for d in robotA_data], dtype=float)
     yA = np.array([d[1] for d in robotA_data], dtype=float)
     zA = np.array([d[2] for d in robotA_data], dtype=float)
-    timeA = np.arange(len(robotA_data)) / 60.0
+    timeA = np.arange(len(robotA_data)) / 30.0
 
     # Offset X so both start at 0
     xA_offset = xA - xA[0]
@@ -425,7 +425,7 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     xB = dataB[:, 0]
     yB = dataB[:, 1]
     zB = dataB[:, 2]
-    timeB = np.arange(len(dataB)) / 60.0
+    timeB = np.arange(len(dataB)) / 30.0
     xB_offset = xB - xB[0]
     
     # Create figure with 2-and-1 layout
@@ -470,21 +470,6 @@ def generate_overlay_trajectory_plots(robotA_data, robotB_data, output_filename=
     ax3.grid(True, alpha=0.3)
     ax3.legend(fontsize=11)
     
-    # Add statistics for both robots
-    stats_text = f"Robot A (UR5):\n"
-    stats_text += f"  Points: {len(robotA_data)}, Duration: {timeA[-1]:.1f}s\n"
-    stats_text += f"  X: [{xA.min():.3f}, {xA.max():.3f}]m\n"
-    stats_text += f"  Y: [{yA.min():.3f}, {yA.max():.3f}]m\n"
-    stats_text += f"  Z: [{zA.min():.3f}, {zA.max():.3f}]m\n\n"
-    stats_text += f"Robot B (Franka):\n"
-    stats_text += f"  Points: {len(robotB_data)}, Duration: {timeB[-1]:.1f}s\n"
-    stats_text += f"  X: [{xB.min():.3f}, {xB.max():.3f}]m\n"
-    stats_text += f"  Y: [{yB.min():.3f}, {yB.max():.3f}]m\n"
-    stats_text += f"  Z: [{zB.min():.3f}, {zB.max():.3f}]m"
-    
-    fig.text(0.02, 0.02, stats_text, fontsize=9, family='monospace',
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
     # Save figure
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     print(f"✓ Dual robot overlay plot saved: {output_filename}")
@@ -513,7 +498,7 @@ def plot_tracking_errors(robotA_data, robotB_data, output_dir="../graphs"):
     xB = dataB[:n, 0]
     yB = dataB[:n, 1]
     zB = dataB[:n, 2]
-    time_vals = np.arange(n) / 60.0  # Assuming 60 Hz data collection
+    time_vals = np.arange(n) / 30.0  # Assuming 60 Hz data collection
 
     # Offset X so both start at 0
     xA_offset = xA - xA[0]

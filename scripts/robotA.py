@@ -673,7 +673,7 @@ def generate_trajectory_plots():
     
     # Plot X position over time (shows pure sine wave)
     #assume 60Hz for time steps
-    time_steps = np.arange(len(x)) / 60.0
+    time_steps = np.arange(len(x)) / (30.0/2)
     ax2.plot(time_steps, x, 'r-', linewidth=1.5, alpha=0.8)
     ax2.plot(time_steps[0], x[0], 'go', markersize=10, label='Start')
     ax2.plot(time_steps[-1], x[-1], 'ro', markersize=10, label='End')

@@ -69,3 +69,8 @@ The Y axis in the camera frame affects the Z position in the world frame.
 The X axis in the camera frame affects the Y position in the world frame.
 This means that control actions computed for a given axis in the camera frame result in movement along a different axis in the world frame. This mapping is handled by transforming the desired displacement from the camera frame to the world frame using the end-effector’s rotation matrix.
 
+# Error Metrics without Depth
+Tracking Error Metrics:
+X axis:  MAE=0.05364 RMSE=0.06199
+Y axis:  MAE=0.01526 RMSE=0.01699
+Z axis:  MAE=0.01642 RMSE=0.01886
