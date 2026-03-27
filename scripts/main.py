@@ -1,5 +1,5 @@
 """
-Main entry point for dual robot system.
+Main script for dual robot system.
 
 Coordinates:
 - Robot A (UR5): Pick-and-place with 3D trajectory execution
@@ -22,7 +22,7 @@ import vision_processor
 
 CAMERA_FREQ = 30.0  # Camera update frequency in Hz
 SIM_HZ = 120.0     # Simulation frequency in Hz
-VIDEO_RECORDING = True  # Enable video recording
+VIDEO_RECORDING = False  # Enable video recording
 
 # ============================================================================
 # ROBOT CONTROLLERS (Independent control policies)
@@ -155,8 +155,7 @@ class RobotBController:
         self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
         self.last_error_depth = 0.0
         
-        # Deadband and filtering parameters
-        self.pixel_deadband = 7.0  # Don't move if error < 7 pixels
+        # Filtering parameters (deadband removed for improved responsiveness)
         # self.area_deadband = 20.0  # Don't move in Z if area error < 20 px²
         self.filter_alpha = 0.7  # Low-pass filter: 0=no filter, 1=no smoothing
         self.filtered_error_x = 0.0
@@ -222,13 +221,7 @@ class RobotBController:
             if depth is not None and self.target_depth is not None:
                 error_depth = depth - self.target_depth  # Positive = object farther away
 
-            # Apply deadband (prevent micro-corrections)
-            if abs(error_x_pixels) < self.pixel_deadband:
-                error_x_pixels = 0.0
-            if abs(error_y_pixels) < self.pixel_deadband:
-                error_y_pixels = 0.0
-            if abs(error_depth) < 0.002:  # 2mm deadband for depth
-                error_depth = 0.0
+            # Deadband logic removed for improved responsiveness
 
             # Apply low-pass filter (exponential moving average)
             self.filtered_error_x = self.filter_alpha * error_x_pixels + (1 - self.filter_alpha) * self.filtered_error_x
@@ -714,7 +707,7 @@ def main():
     
     # Continuous trajectory execution loop
     cycle_count = 0
-    max_cycles = 4 if robotA.PLOT_GRAPHS else float('inf')
+    max_cycles = 2 if robotA.PLOT_GRAPHS else float('inf')
     
     # Start vision processing worker (separate process for CV)
     print("\n" + "="*70)
