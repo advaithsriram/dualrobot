@@ -1,7 +1,7 @@
 
-# CynLr Dual Robot System
+# Dual Robot System
 
-This repository contains a dual-robot simulation and vision-based tracking system using UR5 and Franka Panda robots in PyBullet.
+This repository contains a dual-robot simulation and vision-based 3D end-effector tracking system using UR5 and Franka Panda robots in PyBullet.
 
 ### Report
 A detailed report is available: [View the report (PDF)](report.pdf)
