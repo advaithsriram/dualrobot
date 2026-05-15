@@ -15,12 +15,10 @@ import time
 import numpy as np
 import multiprocessing as mp
 import os
-import argparse
 
 # Import robot modules
 import robotB
 import vision_processor
-from controllers.franka_policies import PIDTrackingPolicy, PPOTrackingPolicy
 
 CAMERA_FREQ = 30.0  # Camera update frequency in Hz
 SIM_HZ = 120.0     # Simulation frequency in Hz
@@ -124,100 +122,175 @@ class RobotAController:
 
 
 class RobotBController:
-    """Controller for Franka Panda robot with swappable tracking policies."""
-
-    def __init__(
-        self,
-        robot_id,
-        ee_link,
-        policy,
-        image_queue=None,
-        result_queue=None,
-        target_body_id=None,
-        control_mode="pid",
-        trajectory_points=200,
-    ):
+    """Controller for Franka Panda robot - handles vision-based tracking"""
+    
+    def __init__(self, robot_id, ee_link, image_queue=None, result_queue=None):
         self.robot_id = robot_id
         self.ee_link = ee_link
-        self.policy = policy
         self.frame_counter = 0
-        self.control_mode = control_mode
-        self.target_body_id = target_body_id
-        self.trajectory_points = trajectory_points
-
+        
+        # Vision processing queues
         self.image_queue = image_queue
         self.result_queue = result_queue
         self.latest_detection = None
+        
+        # Control parameters
+        self.camera_width = robotB.CAMERA_WIDTH
+        self.camera_height = robotB.CAMERA_HEIGHT
+        
+        # Cartesian visual servoing gains (pixels to meters mapping)
+        # These map pixel errors to Cartesian displacement
+        self.pixel_to_meter_x = 0.001  # P-Gain for X
+        self.pixel_to_meter_y = 0.001  # P-Gain for Y 
 
+        self.pixel_to_meter_x_d = 0.0005 # D-Gain for X 
+        self.pixel_to_meter_y_d = 0.0005 # D-Gain for Y
+
+        self.last_error_x_pixels = 0.0
+        self.last_error_y_pixels = 0.0
+        
+        # Depth control based on depth camera
+        self.target_depth = None  # Will be set from first detection
+        self.depth_to_meter_z = 0.25 # P-Gain for depth control (reduced for smoother tracking)
+        self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
+        self.last_error_depth = 0.0
+        
+        # Filtering parameters
+        self.filter_alpha = 0.7  # Low-pass filter: 0=no filter, 1=no smoothing
+        self.filtered_error_x = 0.0
+        self.filtered_error_y = 0.0
+        self.filtered_error_depth = 0.005
+        
+        # Get controllable joints
         self.controllable_joints = []
         num_joints = p.getNumJoints(robot_id)
         for i in range(num_joints):
             joint_info = p.getJointInfo(robot_id, i)
-            if joint_info[2] == p.JOINT_REVOLUTE:
+            if joint_info[2] == p.JOINT_REVOLUTE:  # Only revolute joints
                 self.controllable_joints.append(i)
-
+        
+        # Get initial end-effector position and orientation
         ee_state = p.getLinkState(robot_id, ee_link)
         self.target_ee_pos = list(ee_state[0])
-        self.initial_ee_orn = ee_state[1]
-        self.previous_ee_pos = np.array(ee_state[0], dtype=np.float32)
+        self.initial_ee_orn = ee_state[1]  # Store initial orientation to prevent drift
+        
+        # Trajectory data collection for plotting
         self.trajectory_data = []
-
-    def _get_target_phase(self):
-        return self.frame_counter * (2 * np.pi / max(1.0, self.trajectory_points))
-
-    def _get_ground_truth_target(self):
-        if self.target_body_id is None:
-            return None, None
-        target_pos, _ = p.getBasePositionAndOrientation(self.target_body_id)
-        target_vel, _ = p.getBaseVelocity(self.target_body_id)
-        return np.array(target_pos, dtype=np.float32), np.array(target_vel, dtype=np.float32)
-
+    
     def control_step(self):
-        """Execute one control step for Franka."""
-
-        if self.control_mode == "pid" and self.frame_counter % 4 == 0:
+        """Execute one control step for Franka - update camera and track object"""
+        
+        # Update camera and send to vision processor every 4 frames (60 Hz)
+        if self.frame_counter % 4 == 0:
             rgb_image, depth_array = robotB.get_camera_image(self.robot_id, self.ee_link)
+
+            # Send both RGB and depth to vision processor (non-blocking)
             if self.image_queue is not None:
                 try:
                     self.image_queue.put_nowait((rgb_image, depth_array))
                 except:
-                    pass
-
-        if self.control_mode == "pid" and self.result_queue is not None:
+                    pass  # Queue full, skip this frame
+        
+        # Get latest detection result (non-blocking)
+        if self.result_queue is not None:
             try:
                 while not self.result_queue.empty():
                     self.latest_detection = self.result_queue.get_nowait()
             except:
                 pass
+        
+        # Cartesian visual servoing control
+        if self.latest_detection is not None and self.latest_detection['detected']:
+            pixel_x = self.latest_detection['pixel_x']
+            pixel_y = self.latest_detection['pixel_y']
+            # area = self.latest_detection['area']
+            depth = self.latest_detection.get('depth', None)
 
-        ee_state = p.getLinkState(self.robot_id, self.ee_link, computeLinkVelocity=1)
-        current_pos = np.array(ee_state[0], dtype=np.float32)
-        current_orn = ee_state[1]
-        ee_vel = np.array(ee_state[6], dtype=np.float32) if len(ee_state) > 6 else current_pos - self.previous_ee_pos
-        target_pos, target_vel = self._get_ground_truth_target()
+            # Set target depth from first detection (desired distance)
+            if self.target_depth is None and depth is not None:
+                self.target_depth = depth
+                print(f"[Tracking] Target depth set to {depth:.4f} m (initial distance locked)")
 
-        command = self.policy.act({
-            "detection": self.latest_detection,
-            "current_pos": current_pos,
-            "current_orn": current_orn,
-            "ee_vel": ee_vel,
-            "target_pos": target_pos,
-            "target_vel": target_vel,
-            "phase": self._get_target_phase(),
-        })
+            # Compute pixel error from image center
+            error_x_pixels = pixel_x - self.camera_width / 2   # Positive = object right of center
+            error_y_pixels = pixel_y - self.camera_height / 2  # Positive = object below center
 
-        if command is not None:
-            delta_world_frame = command.delta_world
-            self.target_ee_pos = (current_pos + delta_world_frame).tolist()
+            # Compute depth error for Z control
+            error_depth = 0.0
+            if depth is not None and self.target_depth is not None:
+                error_depth = depth - self.target_depth  # Positive = object farther away
+
+            # Apply low-pass filter (exponential moving average)
+            self.filtered_error_x = self.filter_alpha * error_x_pixels + (1 - self.filter_alpha) * self.filtered_error_x
+            self.filtered_error_y = self.filter_alpha * error_y_pixels + (1 - self.filter_alpha) * self.filtered_error_y
+            self.filtered_error_depth = self.filter_alpha * error_depth + (1 - self.filter_alpha) * self.filtered_error_depth
+
+            # Convert pixel error to Cartesian displacement in camera frame
+            # Camera frame: X=right, Y=down, Z=forward
+            # We want to move end-effector in SAME direction as object to keep it in view
+
+            # --- X-Axis (Camera Right/Left) ---
+            # P-Term (Proportional)
+            p_term_x = self.pixel_to_meter_x * self.filtered_error_x
+            # D-Term (Derivative)
+            error_delta_x = self.filtered_error_x - self.last_error_x_pixels
+            self.last_error_x_pixels = self.filtered_error_x
+            d_term_x = self.pixel_to_meter_x_d * error_delta_x
+            # Total X command
+            delta_x_camera = p_term_x + d_term_x
+
+            # --- Y-Axis (Camera Up/Down) ---
+            # P-Term (Proportional)
+            p_term_y = self.pixel_to_meter_y * self.filtered_error_y
+            # D-Term (Derivative)
+            error_delta_y = self.filtered_error_y - self.last_error_y_pixels
+            self.last_error_y_pixels = self.filtered_error_y
+            d_term_y = self.pixel_to_meter_y_d * error_delta_y
+            # Total Y command
+            delta_y_camera = p_term_y + d_term_y
+
+            p_term_z = self.depth_to_meter_z * self.filtered_error_depth
+            error_delta_z = self.filtered_error_depth - self.last_error_depth
+            self.last_error_depth = self.filtered_error_depth
+            d_term_z = self.depth_to_meter_z_d * error_delta_z
+            delta_z_camera = p_term_z + d_term_z
+
+            # --- END NEW PD LOGIC ---
+            # delta_x_camera = self.filtered_error_x * self.pixel_to_meter_x  # Move right if object on right
+            # delta_y_camera = self.filtered_error_y * self.pixel_to_meter_y  # Move up if object below
+            # delta_z_camera = self.filtered_error_depth * self.depth_to_meter_z  # Move back if object farther (depth)
+            
+            # Get current end-effector state
+            ee_state = p.getLinkState(self.robot_id, self.ee_link)
+            current_pos = ee_state[0]
+            current_orn = ee_state[1]
+            
+            # Get rotation matrix to transform camera frame to world frame
+            rot_matrix = p.getMatrixFromQuaternion(current_orn)
+            rot_matrix = np.array(rot_matrix).reshape(3, 3)
+            
+            # Camera displacement in camera frame
+            delta_camera_frame = np.array([delta_x_camera, delta_y_camera, delta_z_camera])
+            
+            # Transform to world frame
+            delta_world_frame = rot_matrix.dot(delta_camera_frame)
+            
+            # Update target end-effector position
+            self.target_ee_pos[0] = current_pos[0] + delta_world_frame[0]
+            self.target_ee_pos[1] = current_pos[1] + delta_world_frame[1]
+            self.target_ee_pos[2] = current_pos[2] + delta_world_frame[2]
+            
+            # Compute IK to reach target position (use INITIAL orientation to prevent drift)
             target_joints = p.calculateInverseKinematics(
                 self.robot_id,
                 self.ee_link,
                 self.target_ee_pos,
-                self.initial_ee_orn,
+                self.initial_ee_orn,  # Use initial orientation to maintain constant tilt
                 maxNumIterations=20,
                 residualThreshold=1e-4
             )
-
+            
+            # Send motor commands
             for i, joint_idx in enumerate(self.controllable_joints[:7]):
                 if i < len(target_joints):
                     p.setJointMotorControl2(
@@ -229,25 +302,22 @@ class RobotBController:
                         maxVelocity=1.0,
                         positionGain=0.3
                     )
-
+            
+            # Debug output every 60 frames 
             if self.frame_counter % 60 == 0:
-                if self.control_mode == "pid":
-                    pixel_error = command.debug.get("pixel_error", (0.0, 0.0))
-                    depth_error = command.debug.get("depth_error", 0.0)
-                    print(f"[Tracking:PID] Pixel error: ({pixel_error[0]:.1f}, {pixel_error[1]:.1f}) px, "
-                          f"Depth error: {depth_error*1000:.1f} mm, "
-                          f"Delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
-                          f"{delta_world_frame[2]*1000:.1f}) mm")
-                elif target_pos is not None:
-                    err = np.linalg.norm(target_pos - current_pos)
-                    print(f"[Tracking:RL] 3D error: {err*1000:.1f} mm, "
-                          f"Delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
-                          f"{delta_world_frame[2]*1000:.1f}) mm")
-
-        if self.frame_counter % 3 == 0:
-            self.trajectory_data.append([current_pos[0], current_pos[1], current_pos[2]])
-
-        self.previous_ee_pos = current_pos
+                print(f"[Tracking] Pixel error: ({error_x_pixels:.1f}, {error_y_pixels:.1f}) px, "
+                      f"[Tracking] Depth error: {error_depth*1000:.1f} mm, "
+                    #   f"Area: {area:.0f}px² (target: {self.target_area:.0f}), "
+                      f"Delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
+                      f"{delta_world_frame[2]*1000:.1f}) mm")
+            
+            # Collect trajectory data every 4 frames for plotting
+            if self.frame_counter % 3 == 0:
+                ee_state = p.getLinkState(self.robot_id, self.ee_link)
+                pos = ee_state[0]
+                self.trajectory_data.append([pos[0], pos[1], pos[2]])
+            
+        
         self.frame_counter += 1
 
 
@@ -499,22 +569,6 @@ def plot_tracking_errors(robotA_data, robotB_data, output_dir="../graphs"):
 # MAIN EXECUTION
 # ============================================================================
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Dual robot tracking simulation")
-    parser.add_argument(
-        "--control-mode",
-        choices=["pid", "rl"],
-        default="pid",
-        help="Tracking policy for the Franka controller.",
-    )
-    parser.add_argument(
-        "--rl-model-path",
-        default=None,
-        help="Path to a Stable-Baselines3 PPO model zip for --control-mode rl.",
-    )
-    return parser.parse_args()
-
-
 def main():
     """
     Main entry point for the dual-robot simulation.
@@ -524,12 +578,7 @@ def main():
     print("\n" + "="*70)
     print("DUAL ROBOT SYSTEM - MAIN CONTROLLER")
     print("="*70)
-    args = parse_args()
-    if args.control_mode == "rl" and not args.rl_model_path:
-        raise ValueError("--rl-model-path is required when --control-mode rl")
-
     print("Initializing shared environment with both robots...\n")
-    print(f"Control mode: {args.control_mode.upper()}\n")
     
     # Connect to PyBullet
     physics_client = p.connect(p.GUI)
@@ -657,26 +706,16 @@ def main():
     cycle_count = 0
     max_cycles = 2 if robotA.PLOT_GRAPHS else float('inf')
     
-    vision_process = None
-    image_queue = None
-    result_queue = None
-    if args.control_mode == "pid":
-        print("\n" + "="*70)
-        print("STARTING VISION PROCESSOR")
-        print("="*70)
-        vision_process, image_queue, result_queue = vision_processor.start_vision_process(
-            camera_width=robotB.CAMERA_WIDTH,
-            camera_height=robotB.CAMERA_HEIGHT,
-            debug=False
-        )
-        print("✓ Vision processor started in separate process\n")
-        tracking_policy = PIDTrackingPolicy(robotB.CAMERA_WIDTH, robotB.CAMERA_HEIGHT)
-    else:
-        print("\n" + "="*70)
-        print("LOADING PPO TRACKING POLICY")
-        print("="*70)
-        tracking_policy = PPOTrackingPolicy(args.rl_model_path)
-        print(f"✓ PPO policy loaded: {args.rl_model_path}\n")
+    # Start vision processing worker (separate process for CV)
+    print("\n" + "="*70)
+    print("STARTING VISION PROCESSOR")
+    print("="*70)
+    vision_process, image_queue, result_queue = vision_processor.start_vision_process(
+        camera_width=robotB.CAMERA_WIDTH,
+        camera_height=robotB.CAMERA_HEIGHT,
+        debug=False  # Set to True for vision debug output
+    )
+    print("✓ Vision processor started in separate process\n")
     
     # Initialize independent robot controllers
     controller_A = RobotAController(
@@ -691,12 +730,8 @@ def main():
     controller_B = RobotBController(
         robot_id=panda,
         ee_link=ee_link,
-        policy=tracking_policy,
         image_queue=image_queue,
-        result_queue=result_queue,
-        target_body_id=cube,
-        control_mode=args.control_mode,
-        trajectory_points=robotA.NUM_CIRCLE_POINTS
+        result_queue=result_queue
     )
     
     print("\n✓ Starting independent robot controllers in unified simulation loop...\n")
@@ -718,10 +753,9 @@ def main():
         print("\n\nShutting down...")
     
     # Cleanup vision processor
-    if vision_process is not None:
-        print("Terminating vision processor...")
-        vision_process.terminate()
-        vision_process.join(timeout=1.0)
+    print("Terminating vision processor...")
+    vision_process.terminate()
+    vision_process.join(timeout=1.0)
     
     # Generate plots if enabled
     if robotA.PLOT_GRAPHS and len(robotA.trajectory_data) > 0:

@@ -41,7 +41,32 @@ pip install -r requirements.txt
 ### Running the Simulation
 ```bash
 cd scripts
-python main.py
+python main.py --control-mode pid
+```
+
+The original visual-servoing PID baseline is frozen under:
+```text
+scripts/baselines/pid/
+```
+
+The active simulator now supports swappable Franka tracking policies:
+```bash
+cd scripts
+python main.py --control-mode pid
+python main.py --control-mode rl --rl-model-path ../models/ppo_franka_tracker.zip
+```
+
+### Stage 1 RL: Ground-Truth PPO Tracking
+Train a PPO policy using PyBullet ground-truth target pose:
+```bash
+cd scripts
+python train_rl_tracker.py --timesteps 200000 --save-path ../models/ppo_franka_tracker
+```
+
+Evaluate the trained policy in the RL environment:
+```bash
+cd scripts
+python evaluate_rl_tracker.py --model-path ../models/ppo_franka_tracker.zip
 ```
 
 ### Directory Structure
