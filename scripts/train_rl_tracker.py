@@ -1,0 +1,219 @@
+"""Train a PPO policy for ground-truth 3D end-effector tracking."""
+
+import argparse
+import os
+
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv
+
+from rl.tracking_env import FrankaGroundTruthTrackingEnv
+
+
+class PeriodicTrainingPrinter(BaseCallback):
+    def __init__(self, print_every: int):
+        super().__init__()
+        self.print_every = print_every
+        self.next_print = print_every
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        rewards = self.locals.get("rewards", [])
+        tracking_errors = [
+            info["tracking_error"]
+            for info in infos
+            if isinstance(info, dict) and "tracking_error" in info
+        ]
+        tracking_errors_x = [
+            info["tracking_error_x"]
+            for info in infos
+            if isinstance(info, dict) and "tracking_error_x" in info
+        ]
+        tracking_errors_yz = [
+            info["tracking_error_yz"]
+            for info in infos
+            if isinstance(info, dict) and "tracking_error_yz" in info
+        ]
+        velocity_errors = [
+            info["velocity_error"]
+            for info in infos
+            if isinstance(info, dict) and "velocity_error" in info
+        ]
+        velocity_errors_x = [
+            info["velocity_error_x"]
+            for info in infos
+            if isinstance(info, dict) and "velocity_error_x" in info
+        ]
+        velocity_errors_yz = [
+            info["velocity_error_yz"]
+            for info in infos
+            if isinstance(info, dict) and "velocity_error_yz" in info
+        ]
+
+        if len(rewards) > 0:
+            mean_reward = sum(float(reward) for reward in rewards) / len(rewards)
+            self.logger.record("tracking/step_reward", mean_reward)
+        else:
+            mean_reward = None
+
+        if tracking_errors:
+            mean_error = sum(tracking_errors) / len(tracking_errors)
+            self.logger.record("tracking/error_m", mean_error)
+
+        if tracking_errors_x:
+            mean_error_x = sum(tracking_errors_x) / len(tracking_errors_x)
+            self.logger.record("tracking/error_x_m", mean_error_x)
+
+        if tracking_errors_yz:
+            mean_error_yz = sum(tracking_errors_yz) / len(tracking_errors_yz)
+            self.logger.record("tracking/error_yz_m", mean_error_yz)
+
+        if velocity_errors:
+            mean_velocity_error = sum(velocity_errors) / len(velocity_errors)
+            self.logger.record("tracking/velocity_error_mps", mean_velocity_error)
+
+        if velocity_errors_x:
+            mean_velocity_error_x = sum(velocity_errors_x) / len(velocity_errors_x)
+            self.logger.record("tracking/velocity_error_x_mps", mean_velocity_error_x)
+
+        if velocity_errors_yz:
+            mean_velocity_error_yz = sum(velocity_errors_yz) / len(velocity_errors_yz)
+            self.logger.record("tracking/velocity_error_yz_mps", mean_velocity_error_yz)
+
+        if self.print_every <= 0 or self.num_timesteps < self.next_print:
+            return True
+
+        reward_text = f" reward={mean_reward:.4f}" if mean_reward is not None else ""
+        if tracking_errors:
+            mean_error = sum(tracking_errors) / len(tracking_errors)
+            if velocity_errors:
+                mean_velocity_error = sum(velocity_errors) / len(velocity_errors)
+                detail_text = ""
+                if tracking_errors_x and tracking_errors_yz:
+                    mean_error_x = sum(tracking_errors_x) / len(tracking_errors_x)
+                    mean_error_yz = sum(tracking_errors_yz) / len(tracking_errors_yz)
+                    detail_text = f" x_error={mean_error_x:.5f} m yz_error={mean_error_yz:.5f} m"
+                velocity_detail_text = ""
+                if velocity_errors_x and velocity_errors_yz:
+                    mean_velocity_error_x = sum(velocity_errors_x) / len(velocity_errors_x)
+                    mean_velocity_error_yz = sum(velocity_errors_yz) / len(velocity_errors_yz)
+                    velocity_detail_text = (
+                        f" x_vel_error={mean_velocity_error_x:.5f} m/s"
+                        f" yz_vel_error={mean_velocity_error_yz:.5f} m/s"
+                    )
+                print(
+                    f"[train] step={self.num_timesteps:,} "
+                    f"{reward_text} "
+                    f"tracking_error={mean_error:.5f} m "
+                    f"{detail_text} "
+                    f"velocity_error={mean_velocity_error:.5f} m/s"
+                    f"{velocity_detail_text}"
+                )
+            else:
+                print(f"[train] step={self.num_timesteps:,}{reward_text} tracking_error={mean_error:.5f} m")
+        else:
+            print(f"[train] step={self.num_timesteps:,}{reward_text}")
+        self.next_print += self.print_every
+        return True
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train PPO tracker with ground-truth target pose.")
+    parser.add_argument("--timesteps", type=int, default=200_000)
+    parser.add_argument("--load-path", default=None)
+    parser.add_argument("--save-path", default="../models/ppo_franka_tracker")
+    parser.add_argument("--log-dir", default="../runs/ppo_franka_tracker")
+    parser.add_argument("--render", action="store_true")
+    parser.add_argument("--trajectory-mode", choices=["circle", "lissajous", "mixed"], default="mixed")
+    parser.add_argument("--action-mode", choices=["xyz", "yz", "x"], default="xyz")
+    parser.add_argument("--print-every", type=int, default=10_000)
+    parser.add_argument("--progress-bar", action="store_true")
+    parser.add_argument("--sb3-verbose", type=int, choices=[0, 1, 2], default=0)
+    parser.add_argument("--env-verbose", action="store_true")
+    parser.add_argument("--position-x-reward-weight", type=float, default=80.0)
+    parser.add_argument("--position-yz-reward-weight", type=float, default=50.0)
+    parser.add_argument("--velocity-x-reward-weight", type=float, default=1.0)
+    parser.add_argument("--velocity-yz-reward-weight", type=float, default=0.5)
+    return parser.parse_args()
+
+
+def make_env(
+    render_mode,
+    trajectory_mode,
+    action_mode,
+    quiet,
+    position_x_reward_weight,
+    position_yz_reward_weight,
+    velocity_x_reward_weight,
+    velocity_yz_reward_weight,
+):
+    def _factory():
+        env = FrankaGroundTruthTrackingEnv(
+            render_mode=render_mode,
+            trajectory_mode=trajectory_mode,
+            action_mode=action_mode,
+            quiet=quiet,
+            position_x_reward_weight=position_x_reward_weight,
+            position_yz_reward_weight=position_yz_reward_weight,
+            velocity_x_reward_weight=velocity_x_reward_weight,
+            velocity_yz_reward_weight=velocity_yz_reward_weight,
+        )
+        return Monitor(env)
+
+    return _factory
+
+
+def main():
+    args = parse_args()
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    os.makedirs(args.log_dir, exist_ok=True)
+
+    render_mode = "human" if args.render else "direct"
+    env = DummyVecEnv([
+        make_env(
+            render_mode,
+            args.trajectory_mode,
+            args.action_mode,
+            quiet=not args.env_verbose,
+            position_x_reward_weight=args.position_x_reward_weight,
+            position_yz_reward_weight=args.position_yz_reward_weight,
+            velocity_x_reward_weight=args.velocity_x_reward_weight,
+            velocity_yz_reward_weight=args.velocity_yz_reward_weight,
+        )
+    ])
+
+    if args.load_path:
+        model = PPO.load(
+            args.load_path,
+            env=env,
+            verbose=args.sb3_verbose,
+            tensorboard_log=args.log_dir,
+        )
+    else:
+        model = PPO(
+            "MlpPolicy",
+            env,
+            verbose=args.sb3_verbose,
+            tensorboard_log=args.log_dir,
+            n_steps=2048,
+            batch_size=256,
+            gamma=0.99,
+            gae_lambda=0.95,
+            learning_rate=3e-4,
+            clip_range=0.2,
+        )
+    callback = PeriodicTrainingPrinter(args.print_every)
+    model.learn(
+        total_timesteps=args.timesteps,
+        progress_bar=args.progress_bar,
+        callback=callback,
+        reset_num_timesteps=args.load_path is None,
+    )
+    model.save(args.save_path)
+    env.close()
+    print(f"Saved PPO tracker to {args.save_path}.zip")
+
+
+if __name__ == "__main__":
+    main()

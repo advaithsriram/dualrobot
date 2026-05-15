@@ -63,6 +63,34 @@ cd scripts
 python train_rl_tracker.py --timesteps 200000 --save-path ../models/ppo_franka_tracker
 ```
 
+The reward separates X-axis tracking from Y-Z plane tracking:
+```bash
+python train_rl_tracker.py \
+  --timesteps 2000000 \
+  --position-x-reward-weight 80 \
+  --position-yz-reward-weight 50 \
+  --velocity-x-reward-weight 1.0 \
+  --velocity-yz-reward-weight 0.5
+```
+
+TensorBoard logs include `tracking/error_x_m`, `tracking/error_yz_m`,
+`tracking/velocity_error_x_mps`, and `tracking/velocity_error_yz_mps`.
+
+For curriculum training, first train only the Y-Z plane, then resume with full
+3D control:
+```bash
+python train_rl_tracker.py \
+  --timesteps 1000000 \
+  --action-mode yz \
+  --save-path ../models/ppo_franka_tracker_yz
+
+python train_rl_tracker.py \
+  --timesteps 2000000 \
+  --action-mode xyz \
+  --load-path ../models/ppo_franka_tracker_yz.zip \
+  --save-path ../models/ppo_franka_tracker_xyz
+```
+
 Evaluate the trained policy in the RL environment:
 ```bash
 cd scripts
