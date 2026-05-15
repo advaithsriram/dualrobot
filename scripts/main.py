@@ -155,8 +155,7 @@ class RobotBController:
         self.depth_to_meter_z_d = 0.04 # D-Gain for Depth
         self.last_error_depth = 0.0
         
-        # Filtering parameters (deadband removed for improved responsiveness)
-        # self.area_deadband = 20.0  # Don't move in Z if area error < 20 px²
+        # Filtering parameters
         self.filter_alpha = 0.7  # Low-pass filter: 0=no filter, 1=no smoothing
         self.filtered_error_x = 0.0
         self.filtered_error_y = 0.0
@@ -220,8 +219,6 @@ class RobotBController:
             error_depth = 0.0
             if depth is not None and self.target_depth is not None:
                 error_depth = depth - self.target_depth  # Positive = object farther away
-
-            # Deadband logic removed for improved responsiveness
 
             # Apply low-pass filter (exponential moving average)
             self.filtered_error_x = self.filter_alpha * error_x_pixels + (1 - self.filter_alpha) * self.filtered_error_x
