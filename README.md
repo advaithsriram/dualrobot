@@ -73,8 +73,11 @@ python train_rl_tracker.py \
   --velocity-yz-reward-weight 0.5
 ```
 
-TensorBoard logs include `tracking/error_x_m`, `tracking/error_yz_m`,
-`tracking/velocity_error_x_mps`, and `tracking/velocity_error_yz_mps`.
+TensorBoard logs include `tracking/error_x_relative_m`, `tracking/error_x_world_m`,
+`tracking/error_yz_m`, `tracking/velocity_error_x_mps`, and
+`tracking/velocity_error_yz_mps`. The X reward uses relative displacement:
+`(Franka_x - Franka_x_initial) - (Target_x - Target_x_initial)`, matching the
+PID baseline's X-error convention.
 
 For curriculum training, first train only the Y-Z plane, then resume with full
 3D control:

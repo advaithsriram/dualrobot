@@ -30,6 +30,11 @@ class PeriodicTrainingPrinter(BaseCallback):
             for info in infos
             if isinstance(info, dict) and "tracking_error_x" in info
         ]
+        tracking_errors_x_world = [
+            info["tracking_error_x_world"]
+            for info in infos
+            if isinstance(info, dict) and "tracking_error_x_world" in info
+        ]
         tracking_errors_yz = [
             info["tracking_error_yz"]
             for info in infos
@@ -73,7 +78,11 @@ class PeriodicTrainingPrinter(BaseCallback):
 
         if tracking_errors_x:
             mean_error_x = sum(tracking_errors_x) / len(tracking_errors_x)
-            self.logger.record("tracking/error_x_m", mean_error_x)
+            self.logger.record("tracking/error_x_relative_m", mean_error_x)
+
+        if tracking_errors_x_world:
+            mean_error_x_world = sum(tracking_errors_x_world) / len(tracking_errors_x_world)
+            self.logger.record("tracking/error_x_world_m", mean_error_x_world)
 
         if tracking_errors_yz:
             mean_error_yz = sum(tracking_errors_yz) / len(tracking_errors_yz)
@@ -111,7 +120,7 @@ class PeriodicTrainingPrinter(BaseCallback):
                 if tracking_errors_x and tracking_errors_yz:
                     mean_error_x = sum(tracking_errors_x) / len(tracking_errors_x)
                     mean_error_yz = sum(tracking_errors_yz) / len(tracking_errors_yz)
-                    detail_text = f" x_error={mean_error_x:.5f} m yz_error={mean_error_yz:.5f} m"
+                    detail_text = f" x_rel_error={mean_error_x:.5f} m yz_error={mean_error_yz:.5f} m"
                 velocity_detail_text = ""
                 if velocity_errors_x and velocity_errors_yz:
                     mean_velocity_error_x = sum(velocity_errors_x) / len(velocity_errors_x)

@@ -57,6 +57,8 @@ def main():
     episode_mae = []
     episode_x_rmse = []
     episode_x_mae = []
+    episode_x_world_rmse = []
+    episode_x_world_mae = []
     episode_yz_rmse = []
     episode_yz_mae = []
     for episode in range(args.episodes):
@@ -64,6 +66,7 @@ def main():
         done = False
         errors = []
         errors_x = []
+        errors_x_world = []
         errors_yz = []
         while not done:
             action, _ = model.predict(obs, deterministic=True)
@@ -71,35 +74,43 @@ def main():
             done = terminated or truncated
             errors.append(info["tracking_error"])
             errors_x.append(info["tracking_error_x"])
+            errors_x_world.append(info["tracking_error_x_world"])
             errors_yz.append(info["tracking_error_yz"])
 
         errors = np.asarray(errors)
         errors_x = np.asarray(errors_x)
+        errors_x_world = np.asarray(errors_x_world)
         errors_yz = np.asarray(errors_yz)
         rmse = float(np.sqrt(np.mean(errors**2)))
         mae = float(np.mean(np.abs(errors)))
         x_rmse = float(np.sqrt(np.mean(errors_x**2)))
         x_mae = float(np.mean(np.abs(errors_x)))
+        x_world_rmse = float(np.sqrt(np.mean(errors_x_world**2)))
+        x_world_mae = float(np.mean(np.abs(errors_x_world)))
         yz_rmse = float(np.sqrt(np.mean(errors_yz**2)))
         yz_mae = float(np.mean(np.abs(errors_yz)))
         episode_rmse.append(rmse)
         episode_mae.append(mae)
         episode_x_rmse.append(x_rmse)
         episode_x_mae.append(x_mae)
+        episode_x_world_rmse.append(x_world_rmse)
+        episode_x_world_mae.append(x_world_mae)
         episode_yz_rmse.append(yz_rmse)
         episode_yz_mae.append(yz_mae)
         print(
             f"Episode {episode + 1}: "
             f"3D RMSE={rmse:.5f} m, MAE={mae:.5f} m | "
-            f"X RMSE={x_rmse:.5f} m, MAE={x_mae:.5f} m | "
+            f"X-relative RMSE={x_rmse:.5f} m, MAE={x_mae:.5f} m | "
             f"YZ RMSE={yz_rmse:.5f} m, MAE={yz_mae:.5f} m"
         )
 
     print("\nSummary")
     print(f"3D RMSE: mean={np.mean(episode_rmse):.5f} m, std={np.std(episode_rmse):.5f} m")
     print(f"3D MAE:  mean={np.mean(episode_mae):.5f} m, std={np.std(episode_mae):.5f} m")
-    print(f"X RMSE:  mean={np.mean(episode_x_rmse):.5f} m, std={np.std(episode_x_rmse):.5f} m")
-    print(f"X MAE:   mean={np.mean(episode_x_mae):.5f} m, std={np.std(episode_x_mae):.5f} m")
+    print(f"X-relative RMSE: mean={np.mean(episode_x_rmse):.5f} m, std={np.std(episode_x_rmse):.5f} m")
+    print(f"X-relative MAE:  mean={np.mean(episode_x_mae):.5f} m, std={np.std(episode_x_mae):.5f} m")
+    print(f"X-world RMSE:    mean={np.mean(episode_x_world_rmse):.5f} m, std={np.std(episode_x_world_rmse):.5f} m")
+    print(f"X-world MAE:     mean={np.mean(episode_x_world_mae):.5f} m, std={np.std(episode_x_world_mae):.5f} m")
     print(f"YZ RMSE: mean={np.mean(episode_yz_rmse):.5f} m, std={np.std(episode_yz_rmse):.5f} m")
     print(f"YZ MAE:  mean={np.mean(episode_yz_mae):.5f} m, std={np.std(episode_yz_mae):.5f} m")
     env.close()

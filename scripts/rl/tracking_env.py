@@ -128,6 +128,8 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         self.last_vision_detected = 0.0
         self.last_vision_area_norm = 0.0
         self.initial_franka_orn = None
+        self.initial_ee_x = None
+        self.initial_target_x = None
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -144,6 +146,9 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
 
         ee_state = p.getLinkState(self.panda, self.franka_ee_link, computeLinkVelocity=1)
         self.previous_ee_pos = np.array(ee_state[0], dtype=np.float32)
+        target_pos, _ = p.getBasePositionAndOrientation(self.cube, physicsClientId=self.client)
+        self.initial_ee_x = float(self.previous_ee_pos[0])
+        self.initial_target_x = float(target_pos[0])
         return self._get_obs(), {}
 
     def step(self, action):
@@ -158,9 +163,13 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         tracking_state = self._get_tracking_state()
         error = tracking_state["target_pos"] - tracking_state["ee_pos"]
         velocity_error = tracking_state["target_vel"] - tracking_state["ee_vel"]
-        error_norm = float(np.linalg.norm(error))
-        error_x = float(abs(error[0]))
+        error_x_world = float(abs(error[0]))
+        target_x_relative = tracking_state["target_pos"][0] - self.initial_target_x
+        ee_x_relative = tracking_state["ee_pos"][0] - self.initial_ee_x
+        error_x_relative_signed = float(target_x_relative - ee_x_relative)
+        error_x_relative = float(abs(error_x_relative_signed))
         error_yz = float(np.linalg.norm(error[1:3]))
+        tracking_error = float(np.linalg.norm([error_x_relative, error[1], error[2]]))
         velocity_error_norm = float(np.linalg.norm(velocity_error))
         velocity_error_x = float(abs(velocity_error[0]))
         velocity_error_yz = float(np.linalg.norm(velocity_error[1:3]))
@@ -171,14 +180,15 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         velocity_x_weight = self.velocity_x_reward_weight if self.action_mode in {"xyz", "x"} else 0.0
         velocity_yz_weight = self.velocity_yz_reward_weight if self.action_mode in {"xyz", "yz"} else 0.0
 
-        active_error = error_norm
         if self.action_mode == "yz":
             active_error = error_yz
         elif self.action_mode == "x":
-            active_error = error_x
+            active_error = error_x_relative
+        else:
+            active_error = tracking_error
 
         reward = (
-            -position_x_weight * error_x**2
+            -position_x_weight * error_x_relative**2
             -position_yz_weight * error_yz**2
             -velocity_x_weight * velocity_error_x**2
             -velocity_yz_weight * velocity_error_yz**2
@@ -196,8 +206,10 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         terminated = False
         truncated = self.step_count >= self.episode_steps
         info = {
-            "tracking_error": error_norm,
-            "tracking_error_x": error_x,
+            "tracking_error": tracking_error,
+            "tracking_error_x": error_x_relative,
+            "tracking_error_x_relative": error_x_relative,
+            "tracking_error_x_world": error_x_world,
             "tracking_error_yz": error_yz,
             "velocity_error": velocity_error_norm,
             "velocity_error_x": velocity_error_x,
