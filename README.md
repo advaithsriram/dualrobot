@@ -1,4 +1,4 @@
-# Learning-Based Dual-Robot End-Effector Tracking
+# Learning-Based Dual-Robot 3D End-Effector Tracking
 
 This project implements a simulated dual-robot tracking system in PyBullet. A UR5 robot picks up a red target object and moves it along a time-varying 3D trajectory. A Franka Panda then tracks that moving target using either a visual-servoing PID baseline or a PPO reinforcement-learning policy.
 
