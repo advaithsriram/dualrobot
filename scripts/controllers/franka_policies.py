@@ -131,9 +131,18 @@ class PIDTrackingPolicy(BaseTrackingPolicy):
 
 
 class PPOTrackingPolicy(BaseTrackingPolicy):
-    """Ground-truth pose tracking policy loaded from Stable-Baselines3 PPO."""
+    """PPO tracking policy loaded from Stable-Baselines3."""
 
-    def __init__(self, model_path: str, action_scale: float = 0.02):
+    def __init__(
+        self,
+        model_path: str,
+        action_scale: float = 0.02,
+        observation_mode: str = "ground_truth",
+        action_mode: str = "xyz",
+        camera_width: int = 320,
+        camera_height: int = 240,
+        camera_far: float = 5.0,
+    ):
         try:
             from stable_baselines3 import PPO
         except ImportError as exc:
@@ -144,28 +153,101 @@ class PPOTrackingPolicy(BaseTrackingPolicy):
 
         self.model = PPO.load(model_path)
         self.action_scale = action_scale
+        if observation_mode not in {"ground_truth", "vision"}:
+            raise ValueError("observation_mode must be one of: ground_truth, vision")
+        if action_mode not in {"xyz", "yz", "x"}:
+            raise ValueError("action_mode must be one of: xyz, yz, x")
+        self.observation_mode = observation_mode
+        self.action_mode = action_mode
+        self.camera_width = camera_width
+        self.camera_height = camera_height
+        self.camera_far = camera_far
         self.previous_action = np.zeros(3, dtype=np.float32)
+        self.previous_vision_error = np.zeros(3, dtype=np.float32)
+        self.target_depth = None
 
     def reset(self) -> None:
         self.previous_action = np.zeros(3, dtype=np.float32)
+        self.previous_vision_error = np.zeros(3, dtype=np.float32)
+        self.target_depth = None
 
     def act(self, context: dict) -> Optional[TrackingCommand]:
-        observation = make_ground_truth_observation(
-            ee_pos=np.asarray(context["current_pos"], dtype=np.float32),
-            ee_vel=np.asarray(context.get("ee_vel", np.zeros(3)), dtype=np.float32),
-            target_pos=np.asarray(context["target_pos"], dtype=np.float32),
-            target_vel=np.asarray(context.get("target_vel", np.zeros(3)), dtype=np.float32),
-            previous_action=self.previous_action,
-            phase=float(context.get("phase", 0.0)),
-        )
+        if self.observation_mode == "vision":
+            observation = self._make_vision_observation(context)
+        else:
+            observation = make_ground_truth_observation(
+                ee_pos=np.asarray(context["current_pos"], dtype=np.float32),
+                ee_vel=np.asarray(context.get("ee_vel", np.zeros(3)), dtype=np.float32),
+                target_pos=np.asarray(context["target_pos"], dtype=np.float32),
+                target_vel=np.asarray(context.get("target_vel", np.zeros(3)), dtype=np.float32),
+                previous_action=self.previous_action,
+                phase=float(context.get("phase", 0.0)),
+            )
         action, _ = self.model.predict(observation, deterministic=True)
         action = np.asarray(action, dtype=np.float32)
+        action = self._apply_action_mode(np.clip(action, -1.0, 1.0))
         self.previous_action = action
-        delta_world = np.clip(action, -1.0, 1.0) * self.action_scale
+        delta_world = action * self.action_scale
         return TrackingCommand(
             delta_world=delta_world,
-            debug={"action": action, "tracking_error": observation[12:15]},
+            debug={"action": action, "observation_mode": self.observation_mode},
         )
+
+    def _make_vision_observation(self, context: dict) -> np.ndarray:
+        detection = context.get("detection")
+        detected = bool(detection and detection.get("detected", False))
+
+        pixel_error_x = 0.0
+        pixel_error_y = 0.0
+        depth_error = 0.0
+        area_norm = 0.0
+        depth_norm = 0.0
+        depth_value = 0.0
+
+        if detected:
+            pixel_x = float(detection["pixel_x"])
+            pixel_y = float(detection["pixel_y"])
+            depth = detection.get("depth")
+            depth_value = 0.0 if depth is None else float(depth)
+
+            pixel_error_x = (pixel_x - self.camera_width / 2) / (self.camera_width / 2)
+            pixel_error_y = (pixel_y - self.camera_height / 2) / (self.camera_height / 2)
+            if self.target_depth is None and depth is not None:
+                self.target_depth = depth_value
+            if self.target_depth is not None and depth is not None:
+                depth_error = depth_value - self.target_depth
+
+            area_norm = float(detection.get("area", 0.0)) / float(self.camera_width * self.camera_height)
+            depth_norm = depth_value / self.camera_far
+
+        vision_error = np.array([pixel_error_x, pixel_error_y, depth_error], dtype=np.float32)
+        vision_error_delta = vision_error - self.previous_vision_error
+        self.previous_vision_error = vision_error
+
+        return np.concatenate(
+            [
+                vision_error,
+                vision_error_delta,
+                np.array([1.0 if detected else 0.0, area_norm, depth_norm], dtype=np.float32),
+                np.asarray(context.get("ee_vel", np.zeros(3)), dtype=np.float32),
+                self.previous_action,
+                np.array(
+                    [
+                        np.sin(float(context.get("phase", 0.0))),
+                        np.cos(float(context.get("phase", 0.0))),
+                    ],
+                    dtype=np.float32,
+                ),
+            ]
+        ).astype(np.float32)
+
+    def _apply_action_mode(self, action: np.ndarray) -> np.ndarray:
+        masked_action = np.array(action, dtype=np.float32, copy=True)
+        if self.action_mode == "yz":
+            masked_action[0] = 0.0
+        elif self.action_mode == "x":
+            masked_action[1:] = 0.0
+        return masked_action
 
 
 def make_ground_truth_observation(

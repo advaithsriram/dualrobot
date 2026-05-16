@@ -136,12 +136,14 @@ class RobotBController:
         target_body_id=None,
         control_mode="pid",
         trajectory_points=200,
+        observation_mode="ground_truth",
     ):
         self.robot_id = robot_id
         self.ee_link = ee_link
         self.policy = policy
         self.frame_counter = 0
         self.control_mode = control_mode
+        self.observation_mode = observation_mode
         self.target_body_id = target_body_id
         self.trajectory_points = trajectory_points
 
@@ -175,13 +177,38 @@ class RobotBController:
     def control_step(self):
         """Execute one control step for Franka."""
 
-        if self.control_mode == "pid" and self.frame_counter % 4 == 0:
+        needs_camera_detection = (
+            self.control_mode == "pid"
+            or (self.control_mode == "rl" and self.observation_mode == "vision")
+        )
+
+        if needs_camera_detection and self.frame_counter % 4 == 0:
             rgb_image, depth_array = robotB.get_camera_image(self.robot_id, self.ee_link)
-            if self.image_queue is not None:
+            if self.control_mode == "pid" and self.image_queue is not None:
                 try:
                     self.image_queue.put_nowait((rgb_image, depth_array))
                 except:
                     pass
+            elif self.control_mode == "rl":
+                pixel_x, pixel_y, detected, area = vision_processor.detect_red_object(
+                    rgb_image,
+                    robotB.CAMERA_WIDTH,
+                    robotB.CAMERA_HEIGHT,
+                    debug=False,
+                )
+                depth_value = None
+                if detected:
+                    px = int(np.clip(pixel_x, 0, robotB.CAMERA_WIDTH - 1))
+                    py = int(np.clip(pixel_y, 0, robotB.CAMERA_HEIGHT - 1))
+                    depth_value = float(depth_array[py, px])
+                self.latest_detection = {
+                    "pixel_x": pixel_x,
+                    "pixel_y": pixel_y,
+                    "detected": detected,
+                    "area": area,
+                    "depth": depth_value,
+                    "timestamp": time.time(),
+                }
 
         if self.control_mode == "pid" and self.result_queue is not None:
             try:
@@ -240,7 +267,9 @@ class RobotBController:
                           f"{delta_world_frame[2]*1000:.1f}) mm")
                 elif target_pos is not None:
                     err = np.linalg.norm(target_pos - current_pos)
+                    action = command.debug.get("action", np.zeros(3))
                     print(f"[Tracking:RL] 3D error: {err*1000:.1f} mm, "
+                          f"Action: ({action[0]:.2f}, {action[1]:.2f}, {action[2]:.2f}), "
                           f"Delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
                           f"{delta_world_frame[2]*1000:.1f}) mm")
 
@@ -512,6 +541,18 @@ def parse_args():
         default=None,
         help="Path to a Stable-Baselines3 PPO model zip for --control-mode rl.",
     )
+    parser.add_argument(
+        "--observation-mode",
+        choices=["ground_truth", "vision"],
+        default="ground_truth",
+        help="Observation format expected by the PPO model.",
+    )
+    parser.add_argument(
+        "--action-mode",
+        choices=["xyz", "yz", "x"],
+        default="xyz",
+        help="Action axes enabled for the PPO model.",
+    )
     return parser.parse_args()
 
 
@@ -530,6 +571,9 @@ def main():
 
     print("Initializing shared environment with both robots...\n")
     print(f"Control mode: {args.control_mode.upper()}\n")
+    if args.control_mode == "rl":
+        print(f"Observation mode: {args.observation_mode}")
+        print(f"Action mode: {args.action_mode}\n")
     
     # Connect to PyBullet
     physics_client = p.connect(p.GUI)
@@ -675,7 +719,14 @@ def main():
         print("\n" + "="*70)
         print("LOADING PPO TRACKING POLICY")
         print("="*70)
-        tracking_policy = PPOTrackingPolicy(args.rl_model_path)
+        tracking_policy = PPOTrackingPolicy(
+            args.rl_model_path,
+            observation_mode=args.observation_mode,
+            action_mode=args.action_mode,
+            camera_width=robotB.CAMERA_WIDTH,
+            camera_height=robotB.CAMERA_HEIGHT,
+            camera_far=robotB.CAMERA_FAR,
+        )
         print(f"✓ PPO policy loaded: {args.rl_model_path}\n")
     
     # Initialize independent robot controllers
@@ -696,7 +747,8 @@ def main():
         result_queue=result_queue,
         target_body_id=cube,
         control_mode=args.control_mode,
-        trajectory_points=robotA.NUM_CIRCLE_POINTS
+        trajectory_points=robotA.NUM_CIRCLE_POINTS,
+        observation_mode=args.observation_mode
     )
     
     print("\n✓ Starting independent robot controllers in unified simulation loop...\n")

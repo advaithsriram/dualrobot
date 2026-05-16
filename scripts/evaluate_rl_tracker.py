@@ -16,10 +16,16 @@ def parse_args():
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--trajectory-mode", choices=["circle", "lissajous", "mixed"], default="mixed")
     parser.add_argument("--action-mode", choices=["xyz", "yz", "x"], default="xyz")
+    parser.add_argument("--observation-mode", choices=["ground_truth", "vision"], default="ground_truth")
     parser.add_argument("--position-x-reward-weight", type=float, default=80.0)
     parser.add_argument("--position-yz-reward-weight", type=float, default=50.0)
     parser.add_argument("--velocity-x-reward-weight", type=float, default=1.0)
     parser.add_argument("--velocity-yz-reward-weight", type=float, default=0.5)
+    parser.add_argument("--vision-pixel-noise-std", type=float, default=0.0)
+    parser.add_argument("--vision-depth-noise-std", type=float, default=0.0)
+    parser.add_argument("--vision-dropout-prob", type=float, default=0.0)
+    parser.add_argument("--vision-debug", action="store_true")
+    parser.add_argument("--vision-debug-every", type=int, default=100)
     parser.add_argument("--env-verbose", action="store_true")
     return parser.parse_args()
 
@@ -34,10 +40,16 @@ def main():
         render_mode="human" if args.render else "direct",
         trajectory_mode=args.trajectory_mode,
         action_mode=args.action_mode,
+        observation_mode=args.observation_mode,
         position_x_reward_weight=args.position_x_reward_weight,
         position_yz_reward_weight=args.position_yz_reward_weight,
         velocity_x_reward_weight=args.velocity_x_reward_weight,
         velocity_yz_reward_weight=args.velocity_yz_reward_weight,
+        vision_pixel_noise_std=args.vision_pixel_noise_std,
+        vision_depth_noise_std=args.vision_depth_noise_std,
+        vision_dropout_prob=args.vision_dropout_prob,
+        vision_debug=args.vision_debug,
+        vision_debug_every=args.vision_debug_every,
         quiet=not args.env_verbose,
     )
 

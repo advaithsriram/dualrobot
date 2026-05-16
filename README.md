@@ -91,6 +91,19 @@ python train_rl_tracker.py \
   --save-path ../models/ppo_franka_tracker_xyz
 ```
 
+To train from compact vision features instead of ground-truth observations:
+```bash
+python train_rl_tracker.py \
+  --timesteps 1000000 \
+  --observation-mode vision \
+  --action-mode yz \
+  --save-path ../models/ppo_franka_tracker_vision_yz
+```
+
+Vision observations use pixel error, depth error, detection confidence features,
+Franka velocity, previous action, and trajectory phase. The reward and metrics
+still use ground-truth target pose for clean simulation training.
+
 Evaluate the trained policy in the RL environment:
 ```bash
 cd scripts

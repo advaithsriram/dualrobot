@@ -50,6 +50,16 @@ class PeriodicTrainingPrinter(BaseCallback):
             for info in infos
             if isinstance(info, dict) and "velocity_error_yz" in info
         ]
+        vision_detected = [
+            info["vision_detected"]
+            for info in infos
+            if isinstance(info, dict) and "vision_detected" in info
+        ]
+        vision_area_norm = [
+            info["vision_area_norm"]
+            for info in infos
+            if isinstance(info, dict) and "vision_area_norm" in info
+        ]
 
         if len(rewards) > 0:
             mean_reward = sum(float(reward) for reward in rewards) / len(rewards)
@@ -80,6 +90,14 @@ class PeriodicTrainingPrinter(BaseCallback):
         if velocity_errors_yz:
             mean_velocity_error_yz = sum(velocity_errors_yz) / len(velocity_errors_yz)
             self.logger.record("tracking/velocity_error_yz_mps", mean_velocity_error_yz)
+
+        if vision_detected:
+            mean_detected = sum(vision_detected) / len(vision_detected)
+            self.logger.record("vision/detected", mean_detected)
+
+        if vision_area_norm:
+            mean_area_norm = sum(vision_area_norm) / len(vision_area_norm)
+            self.logger.record("vision/area_norm", mean_area_norm)
 
         if self.print_every <= 0 or self.num_timesteps < self.next_print:
             return True
@@ -127,6 +145,7 @@ def parse_args():
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--trajectory-mode", choices=["circle", "lissajous", "mixed"], default="mixed")
     parser.add_argument("--action-mode", choices=["xyz", "yz", "x"], default="xyz")
+    parser.add_argument("--observation-mode", choices=["ground_truth", "vision"], default="ground_truth")
     parser.add_argument("--print-every", type=int, default=10_000)
     parser.add_argument("--progress-bar", action="store_true")
     parser.add_argument("--sb3-verbose", type=int, choices=[0, 1, 2], default=0)
@@ -135,6 +154,11 @@ def parse_args():
     parser.add_argument("--position-yz-reward-weight", type=float, default=50.0)
     parser.add_argument("--velocity-x-reward-weight", type=float, default=1.0)
     parser.add_argument("--velocity-yz-reward-weight", type=float, default=0.5)
+    parser.add_argument("--vision-pixel-noise-std", type=float, default=0.0)
+    parser.add_argument("--vision-depth-noise-std", type=float, default=0.0)
+    parser.add_argument("--vision-dropout-prob", type=float, default=0.0)
+    parser.add_argument("--vision-debug", action="store_true")
+    parser.add_argument("--vision-debug-every", type=int, default=100)
     return parser.parse_args()
 
 
@@ -142,22 +166,34 @@ def make_env(
     render_mode,
     trajectory_mode,
     action_mode,
+    observation_mode,
     quiet,
     position_x_reward_weight,
     position_yz_reward_weight,
     velocity_x_reward_weight,
     velocity_yz_reward_weight,
+    vision_pixel_noise_std,
+    vision_depth_noise_std,
+    vision_dropout_prob,
+    vision_debug,
+    vision_debug_every,
 ):
     def _factory():
         env = FrankaGroundTruthTrackingEnv(
             render_mode=render_mode,
             trajectory_mode=trajectory_mode,
             action_mode=action_mode,
+            observation_mode=observation_mode,
             quiet=quiet,
             position_x_reward_weight=position_x_reward_weight,
             position_yz_reward_weight=position_yz_reward_weight,
             velocity_x_reward_weight=velocity_x_reward_weight,
             velocity_yz_reward_weight=velocity_yz_reward_weight,
+            vision_pixel_noise_std=vision_pixel_noise_std,
+            vision_depth_noise_std=vision_depth_noise_std,
+            vision_dropout_prob=vision_dropout_prob,
+            vision_debug=vision_debug,
+            vision_debug_every=vision_debug_every,
         )
         return Monitor(env)
 
@@ -175,11 +211,17 @@ def main():
             render_mode,
             args.trajectory_mode,
             args.action_mode,
+            args.observation_mode,
             quiet=not args.env_verbose,
             position_x_reward_weight=args.position_x_reward_weight,
             position_yz_reward_weight=args.position_yz_reward_weight,
             velocity_x_reward_weight=args.velocity_x_reward_weight,
             velocity_yz_reward_weight=args.velocity_yz_reward_weight,
+            vision_pixel_noise_std=args.vision_pixel_noise_std,
+            vision_depth_noise_std=args.vision_depth_noise_std,
+            vision_dropout_prob=args.vision_dropout_prob,
+            vision_debug=args.vision_debug,
+            vision_debug_every=args.vision_debug_every,
         )
     ])
 

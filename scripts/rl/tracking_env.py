@@ -27,6 +27,7 @@ if SCRIPTS_ROOT not in sys.path:
 
 import robotA
 import robotB
+import vision_processor
 from controllers.franka_policies import make_ground_truth_observation
 from pick_place import attach_object_to_robot, create_graspable_cube
 
@@ -64,12 +65,18 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         action_scale: float = 0.02,
         trajectory_mode: str = "mixed",
         action_mode: str = "xyz",
+        observation_mode: str = "ground_truth",
         seed: Optional[int] = None,
         quiet: bool = True,
         position_x_reward_weight: float = 80.0,
         position_yz_reward_weight: float = 50.0,
         velocity_x_reward_weight: float = 1.0,
         velocity_yz_reward_weight: float = 0.5,
+        vision_pixel_noise_std: float = 0.0,
+        vision_depth_noise_std: float = 0.0,
+        vision_dropout_prob: float = 0.0,
+        vision_debug: bool = False,
+        vision_debug_every: int = 100,
     ):
         super().__init__()
         self.render_mode = render_mode
@@ -79,18 +86,27 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         if action_mode not in {"xyz", "yz", "x"}:
             raise ValueError("action_mode must be one of: xyz, yz, x")
         self.action_mode = action_mode
+        if observation_mode not in {"ground_truth", "vision"}:
+            raise ValueError("observation_mode must be one of: ground_truth, vision")
+        self.observation_mode = observation_mode
         self.rng = np.random.default_rng(seed)
         self.quiet = quiet
         self.position_x_reward_weight = position_x_reward_weight
         self.position_yz_reward_weight = position_yz_reward_weight
         self.velocity_x_reward_weight = velocity_x_reward_weight
         self.velocity_yz_reward_weight = velocity_yz_reward_weight
+        self.vision_pixel_noise_std = vision_pixel_noise_std
+        self.vision_depth_noise_std = vision_depth_noise_std
+        self.vision_dropout_prob = vision_dropout_prob
+        self.vision_debug = vision_debug
+        self.vision_debug_every = vision_debug_every
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
+        obs_dim = 20 if self.observation_mode == "ground_truth" else 17
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(20,),
+            shape=(obs_dim,),
             dtype=np.float32,
         )
 
@@ -107,6 +123,10 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         self.step_count = 0
         self.previous_action = np.zeros(3, dtype=np.float32)
         self.previous_ee_pos = np.zeros(3, dtype=np.float32)
+        self.previous_vision_error = np.zeros(3, dtype=np.float32)
+        self.target_depth = None
+        self.last_vision_detected = 0.0
+        self.last_vision_area_norm = 0.0
         self.initial_franka_orn = None
 
     def reset(self, seed=None, options=None):
@@ -117,6 +137,10 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
             self._build_world()
         self.step_count = 0
         self.previous_action = np.zeros(3, dtype=np.float32)
+        self.previous_vision_error = np.zeros(3, dtype=np.float32)
+        self.target_depth = None
+        self.last_vision_detected = 0.0
+        self.last_vision_area_norm = 0.0
 
         ee_state = p.getLinkState(self.panda, self.franka_ee_link, computeLinkVelocity=1)
         self.previous_ee_pos = np.array(ee_state[0], dtype=np.float32)
@@ -131,9 +155,9 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         for _ in range(4):
             p.stepSimulation(physicsClientId=self.client)
 
-        obs = self._get_obs()
-        error = obs[12:15]
-        velocity_error = obs[9:12] - obs[3:6]
+        tracking_state = self._get_tracking_state()
+        error = tracking_state["target_pos"] - tracking_state["ee_pos"]
+        velocity_error = tracking_state["target_vel"] - tracking_state["ee_vel"]
         error_norm = float(np.linalg.norm(error))
         error_x = float(abs(error[0]))
         error_yz = float(np.linalg.norm(error[1:3]))
@@ -168,6 +192,7 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
 
         self.previous_action = action
         self.step_count += 1
+        obs = self._get_obs(tracking_state)
         terminated = False
         truncated = self.step_count >= self.episode_steps
         info = {
@@ -178,6 +203,9 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
             "velocity_error_x": velocity_error_x,
             "velocity_error_yz": velocity_error_yz,
             "action_mode": self.action_mode,
+            "observation_mode": self.observation_mode,
+            "vision_detected": self.last_vision_detected,
+            "vision_area_norm": self.last_vision_area_norm,
         }
         return obs, reward, terminated, truncated, info
 
@@ -367,7 +395,7 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
             masked_action[1:] = 0.0
         return masked_action
 
-    def _get_obs(self):
+    def _get_tracking_state(self):
         ee_state = p.getLinkState(
             self.panda,
             self.franka_ee_link,
@@ -380,11 +408,102 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         target_vel, _ = p.getBaseVelocity(self.cube, physicsClientId=self.client)
         phase = 2 * np.pi * (self.step_count % len(self.ur5_waypoints)) / len(self.ur5_waypoints)
         self.previous_ee_pos = ee_pos
+        return {
+            "ee_pos": ee_pos,
+            "ee_vel": ee_vel,
+            "target_pos": np.asarray(target_pos, dtype=np.float32),
+            "target_vel": np.asarray(target_vel, dtype=np.float32),
+            "phase": phase,
+        }
+
+    def _get_obs(self, tracking_state=None):
+        if tracking_state is None:
+            tracking_state = self._get_tracking_state()
+
+        if self.observation_mode == "vision":
+            return self._get_vision_observation(tracking_state)
+
         return make_ground_truth_observation(
-            ee_pos=ee_pos,
-            ee_vel=ee_vel,
-            target_pos=np.asarray(target_pos, dtype=np.float32),
-            target_vel=np.asarray(target_vel, dtype=np.float32),
+            ee_pos=tracking_state["ee_pos"],
+            ee_vel=tracking_state["ee_vel"],
+            target_pos=tracking_state["target_pos"],
+            target_vel=tracking_state["target_vel"],
             previous_action=self.previous_action,
-            phase=phase,
+            phase=tracking_state["phase"],
         )
+
+    def _get_vision_observation(self, tracking_state):
+        rgb_image, depth_array = robotB.get_camera_image(self.panda, self.franka_ee_link)
+        pixel_x, pixel_y, detected, area = vision_processor.detect_red_object(
+            rgb_image,
+            robotB.CAMERA_WIDTH,
+            robotB.CAMERA_HEIGHT,
+            debug=False,
+        )
+        if detected and self.vision_dropout_prob > 0.0:
+            detected = bool(self.rng.random() >= self.vision_dropout_prob)
+
+        if detected and self.vision_pixel_noise_std > 0.0:
+            pixel_x += float(self.rng.normal(0.0, self.vision_pixel_noise_std))
+            pixel_y += float(self.rng.normal(0.0, self.vision_pixel_noise_std))
+            pixel_x = float(np.clip(pixel_x, 0, robotB.CAMERA_WIDTH - 1))
+            pixel_y = float(np.clip(pixel_y, 0, robotB.CAMERA_HEIGHT - 1))
+
+        depth_value = 0.0
+        if detected:
+            px = int(np.clip(pixel_x, 0, robotB.CAMERA_WIDTH - 1))
+            py = int(np.clip(pixel_y, 0, robotB.CAMERA_HEIGHT - 1))
+            depth_value = float(depth_array[py, px])
+            if self.vision_depth_noise_std > 0.0:
+                depth_value += float(self.rng.normal(0.0, self.vision_depth_noise_std))
+            if self.target_depth is None:
+                self.target_depth = depth_value
+
+        if not detected:
+            pixel_error_x = 0.0
+            pixel_error_y = 0.0
+            depth_error = 0.0
+        else:
+            pixel_error_x = (pixel_x - robotB.CAMERA_WIDTH / 2) / (robotB.CAMERA_WIDTH / 2)
+            pixel_error_y = (pixel_y - robotB.CAMERA_HEIGHT / 2) / (robotB.CAMERA_HEIGHT / 2)
+            depth_error = 0.0 if self.target_depth is None else depth_value - self.target_depth
+
+        vision_error = np.array([pixel_error_x, pixel_error_y, depth_error], dtype=np.float32)
+        vision_error_delta = vision_error - self.previous_vision_error
+        self.previous_vision_error = vision_error
+
+        area_norm = float(area) / float(robotB.CAMERA_WIDTH * robotB.CAMERA_HEIGHT)
+        depth_norm = depth_value / robotB.CAMERA_FAR if detected else 0.0
+        detected_flag = 1.0 if detected else 0.0
+        self.last_vision_detected = detected_flag
+        self.last_vision_area_norm = area_norm
+
+        if self.vision_debug and self.step_count % max(1, self.vision_debug_every) == 0:
+            print(
+                "[vision] "
+                f"step={self.step_count:,} "
+                f"detected={bool(detected)} "
+                f"pixel=({pixel_x:.1f},{pixel_y:.1f}) "
+                f"pixel_error_norm=({pixel_error_x:.3f},{pixel_error_y:.3f}) "
+                f"depth={depth_value:.4f}m "
+                f"target_depth={0.0 if self.target_depth is None else self.target_depth:.4f}m "
+                f"depth_error={depth_error:.4f}m "
+                f"area_norm={area_norm:.5f}"
+            )
+
+        return np.concatenate(
+            [
+                vision_error,
+                vision_error_delta,
+                np.array([detected_flag, area_norm, depth_norm], dtype=np.float32),
+                tracking_state["ee_vel"],
+                self.previous_action,
+                np.array(
+                    [
+                        np.sin(tracking_state["phase"]),
+                        np.cos(tracking_state["phase"]),
+                    ],
+                    dtype=np.float32,
+                ),
+            ]
+        ).astype(np.float32)
