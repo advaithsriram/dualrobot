@@ -53,20 +53,30 @@ The active simulator now supports swappable Franka tracking policies:
 ```bash
 cd scripts
 python main.py --control-mode pid
-python main.py --control-mode rl --rl-model-path ../models/ppo_franka_tracker.zip
+python main.py \
+  --control-mode rl \
+  --rl-model-path ../models/checkpoints/ppo_franka_tracker_vision_xyz_relx2_2200000_steps.zip \
+  --observation-mode vision \
+  --action-mode xyz
 ```
 
-### Stage 1 RL: Ground-Truth PPO Tracking
-Train a PPO policy using PyBullet ground-truth target pose:
+### RL Training: Vision-Based PPO Tracking
+Train a PPO policy using compact vision features from the simulated wrist camera:
 ```bash
 cd scripts
-python train_rl_tracker.py --timesteps 200000 --save-path ../models/ppo_franka_tracker
+python train_rl_tracker.py \
+  --timesteps 200000 \
+  --observation-mode vision \
+  --action-mode xyz \
+  --save-path ../models/ppo_franka_tracker_vision_xyz
 ```
 
 The reward separates X-axis tracking from Y-Z plane tracking:
 ```bash
 python train_rl_tracker.py \
   --timesteps 2000000 \
+  --observation-mode vision \
+  --action-mode xyz \
   --position-x-reward-weight 80 \
   --position-yz-reward-weight 50 \
   --velocity-x-reward-weight 1.0 \
@@ -84,33 +94,66 @@ For curriculum training, first train only the Y-Z plane, then resume with full
 ```bash
 python train_rl_tracker.py \
   --timesteps 1000000 \
-  --action-mode yz \
-  --save-path ../models/ppo_franka_tracker_yz
-
-python train_rl_tracker.py \
-  --timesteps 2000000 \
-  --action-mode xyz \
-  --load-path ../models/ppo_franka_tracker_yz.zip \
-  --save-path ../models/ppo_franka_tracker_xyz
-```
-
-To train from compact vision features instead of ground-truth observations:
-```bash
-python train_rl_tracker.py \
-  --timesteps 1000000 \
   --observation-mode vision \
   --action-mode yz \
   --save-path ../models/ppo_franka_tracker_vision_yz
+
+python train_rl_tracker.py \
+  --timesteps 2000000 \
+  --observation-mode vision \
+  --action-mode xyz \
+  --load-path ../models/ppo_franka_tracker_vision_yz.zip \
+  --save-path ../models/ppo_franka_tracker_vision_xyz
 ```
 
 Vision observations use pixel error, depth error, detection confidence features,
 Franka velocity, previous action, and trajectory phase. The reward and metrics
 still use ground-truth target pose for clean simulation training.
 
+The PPO observation space is always the 17-D vision feature vector. Older
+ground-truth observations are no longer used, so pass `--observation-mode vision`
+when training, evaluating, or running `main.py`.
+
+Train with visual uncertainty:
+```bash
+python train_rl_tracker.py \
+  --timesteps 300000 \
+  --observation-mode vision \
+  --action-mode xyz \
+  --load-path ../models/ppo_franka_tracker_vision_xyz.zip \
+  --save-path ../models/ppo_franka_tracker_vision_xyz_noisy \
+  --vision-pixel-noise-std 2.0 \
+  --vision-depth-noise-std 0.01 \
+  --vision-dropout-prob 0.05
+```
+
+Evaluate with visual uncertainty:
+```bash
+python evaluate_rl_tracker.py \
+  --model-path ../models/ppo_franka_tracker_vision_xyz.zip \
+  --observation-mode vision \
+  --action-mode xyz \
+  --vision-pixel-noise-std 2.0 \
+  --vision-depth-noise-std 0.01 \
+  --vision-dropout-prob 0.05
+```
+
+Run the trained vision policy in the dual-robot simulator:
+```bash
+python main.py \
+  --control-mode rl \
+  --rl-model-path ../models/checkpoints/ppo_franka_tracker_vision_xyz_relx2_2200000_steps.zip \
+  --observation-mode vision \
+  --action-mode xyz
+```
+
 Evaluate the trained policy in the RL environment:
 ```bash
 cd scripts
-python evaluate_rl_tracker.py --model-path ../models/ppo_franka_tracker.zip
+python evaluate_rl_tracker.py \
+  --model-path ../models/ppo_franka_tracker_vision_xyz.zip \
+  --observation-mode vision \
+  --action-mode xyz
 ```
 
 ### Directory Structure

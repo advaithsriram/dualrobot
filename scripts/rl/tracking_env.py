@@ -28,7 +28,6 @@ if SCRIPTS_ROOT not in sys.path:
 import robotA
 import robotB
 import vision_processor
-from controllers.franka_policies import make_ground_truth_observation
 from pick_place import attach_object_to_robot, create_graspable_cube
 
 
@@ -65,7 +64,7 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         action_scale: float = 0.02,
         trajectory_mode: str = "mixed",
         action_mode: str = "xyz",
-        observation_mode: str = "ground_truth",
+        observation_mode: str = "vision",
         seed: Optional[int] = None,
         quiet: bool = True,
         position_x_reward_weight: float = 80.0,
@@ -86,9 +85,9 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         if action_mode not in {"xyz", "yz", "x"}:
             raise ValueError("action_mode must be one of: xyz, yz, x")
         self.action_mode = action_mode
-        if observation_mode not in {"ground_truth", "vision"}:
-            raise ValueError("observation_mode must be one of: ground_truth, vision")
-        self.observation_mode = observation_mode
+        if observation_mode != "vision":
+            raise ValueError("Only observation_mode='vision' is supported for RL training.")
+        self.observation_mode = "vision"
         self.rng = np.random.default_rng(seed)
         self.quiet = quiet
         self.position_x_reward_weight = position_x_reward_weight
@@ -102,11 +101,10 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         self.vision_debug_every = vision_debug_every
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
-        obs_dim = 20 if self.observation_mode == "ground_truth" else 17
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(obs_dim,),
+            shape=(17,),
             dtype=np.float32,
         )
 
@@ -168,6 +166,8 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         ee_x_relative = tracking_state["ee_pos"][0] - self.initial_ee_x
         error_x_relative_signed = float(target_x_relative - ee_x_relative)
         error_x_relative = float(abs(error_x_relative_signed))
+        error_y = float(abs(error[1]))
+        error_z = float(abs(error[2]))
         error_yz = float(np.linalg.norm(error[1:3]))
         tracking_error = float(np.linalg.norm([error_x_relative, error[1], error[2]]))
         velocity_error_norm = float(np.linalg.norm(velocity_error))
@@ -210,6 +210,8 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
             "tracking_error_x": error_x_relative,
             "tracking_error_x_relative": error_x_relative,
             "tracking_error_x_world": error_x_world,
+            "tracking_error_y": error_y,
+            "tracking_error_z": error_z,
             "tracking_error_yz": error_yz,
             "velocity_error": velocity_error_norm,
             "velocity_error_x": velocity_error_x,
@@ -432,17 +434,7 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
         if tracking_state is None:
             tracking_state = self._get_tracking_state()
 
-        if self.observation_mode == "vision":
-            return self._get_vision_observation(tracking_state)
-
-        return make_ground_truth_observation(
-            ee_pos=tracking_state["ee_pos"],
-            ee_vel=tracking_state["ee_vel"],
-            target_pos=tracking_state["target_pos"],
-            target_vel=tracking_state["target_vel"],
-            previous_action=self.previous_action,
-            phase=tracking_state["phase"],
-        )
+        return self._get_vision_observation(tracking_state)
 
     def _get_vision_observation(self, tracking_state):
         rgb_image, depth_array = robotB.get_camera_image(self.panda, self.franka_ee_link)

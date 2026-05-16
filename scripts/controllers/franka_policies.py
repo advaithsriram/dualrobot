@@ -137,7 +137,7 @@ class PPOTrackingPolicy(BaseTrackingPolicy):
         self,
         model_path: str,
         action_scale: float = 0.02,
-        observation_mode: str = "ground_truth",
+        observation_mode: str = "vision",
         action_mode: str = "xyz",
         camera_width: int = 320,
         camera_height: int = 240,
@@ -153,8 +153,8 @@ class PPOTrackingPolicy(BaseTrackingPolicy):
 
         self.model = PPO.load(model_path)
         self.action_scale = action_scale
-        if observation_mode not in {"ground_truth", "vision"}:
-            raise ValueError("observation_mode must be one of: ground_truth, vision")
+        if observation_mode != "vision":
+            raise ValueError("Only observation_mode='vision' is supported for PPO policies.")
         if action_mode not in {"xyz", "yz", "x"}:
             raise ValueError("action_mode must be one of: xyz, yz, x")
         self.observation_mode = observation_mode
@@ -172,17 +172,7 @@ class PPOTrackingPolicy(BaseTrackingPolicy):
         self.target_depth = None
 
     def act(self, context: dict) -> Optional[TrackingCommand]:
-        if self.observation_mode == "vision":
-            observation = self._make_vision_observation(context)
-        else:
-            observation = make_ground_truth_observation(
-                ee_pos=np.asarray(context["current_pos"], dtype=np.float32),
-                ee_vel=np.asarray(context.get("ee_vel", np.zeros(3)), dtype=np.float32),
-                target_pos=np.asarray(context["target_pos"], dtype=np.float32),
-                target_vel=np.asarray(context.get("target_vel", np.zeros(3)), dtype=np.float32),
-                previous_action=self.previous_action,
-                phase=float(context.get("phase", 0.0)),
-            )
+        observation = self._make_vision_observation(context)
         action, _ = self.model.predict(observation, deterministic=True)
         action = np.asarray(action, dtype=np.float32)
         action = self._apply_action_mode(np.clip(action, -1.0, 1.0))
@@ -248,25 +238,3 @@ class PPOTrackingPolicy(BaseTrackingPolicy):
         elif self.action_mode == "x":
             masked_action[1:] = 0.0
         return masked_action
-
-
-def make_ground_truth_observation(
-    ee_pos: np.ndarray,
-    ee_vel: np.ndarray,
-    target_pos: np.ndarray,
-    target_vel: np.ndarray,
-    previous_action: np.ndarray,
-    phase: float,
-) -> np.ndarray:
-    error = target_pos - ee_pos
-    return np.concatenate(
-        [
-            ee_pos,
-            ee_vel,
-            target_pos,
-            target_vel,
-            error,
-            previous_action,
-            np.array([np.sin(phase), np.cos(phase)], dtype=np.float32),
-        ]
-    ).astype(np.float32)

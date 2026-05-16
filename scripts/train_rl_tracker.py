@@ -185,7 +185,7 @@ def parse_args():
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--trajectory-mode", choices=["circle", "lissajous", "mixed"], default="mixed")
     parser.add_argument("--action-mode", choices=["xyz", "yz", "x"], default="xyz")
-    parser.add_argument("--observation-mode", choices=["ground_truth", "vision"], default="ground_truth")
+    parser.add_argument("--observation-mode", choices=["vision"], default="vision")
     parser.add_argument("--print-every", type=int, default=10_000)
     parser.add_argument("--progress-bar", action="store_true")
     parser.add_argument("--sb3-verbose", type=int, choices=[0, 1, 2], default=0)

@@ -136,7 +136,7 @@ class RobotBController:
         target_body_id=None,
         control_mode="pid",
         trajectory_points=200,
-        observation_mode="ground_truth",
+        observation_mode="vision",
     ):
         self.robot_id = robot_id
         self.ee_link = ee_link
@@ -167,7 +167,7 @@ class RobotBController:
     def _get_target_phase(self):
         return self.frame_counter * (2 * np.pi / max(1.0, self.trajectory_points))
 
-    def _get_ground_truth_target(self):
+    def _get_target_state(self):
         if self.target_body_id is None:
             return None, None
         target_pos, _ = p.getBasePositionAndOrientation(self.target_body_id)
@@ -221,7 +221,7 @@ class RobotBController:
         current_pos = np.array(ee_state[0], dtype=np.float32)
         current_orn = ee_state[1]
         ee_vel = np.array(ee_state[6], dtype=np.float32) if len(ee_state) > 6 else current_pos - self.previous_ee_pos
-        target_pos, target_vel = self._get_ground_truth_target()
+        target_pos, target_vel = self._get_target_state()
 
         command = self.policy.act({
             "detection": self.latest_detection,
@@ -543,9 +543,9 @@ def parse_args():
     )
     parser.add_argument(
         "--observation-mode",
-        choices=["ground_truth", "vision"],
-        default="ground_truth",
-        help="Observation format expected by the PPO model.",
+        choices=["vision"],
+        default="vision",
+        help="Observation format expected by the PPO model. RL policies use 17-D vision features.",
     )
     parser.add_argument(
         "--action-mode",
