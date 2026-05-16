@@ -4,6 +4,7 @@ import argparse
 import os
 
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -145,11 +146,41 @@ class PeriodicTrainingPrinter(BaseCallback):
         return True
 
 
+class PeriodicCheckpointSaver(BaseCallback):
+    def __init__(self, save_every: int, checkpoint_dir: str, checkpoint_name: str):
+        super().__init__()
+        self.save_every = save_every
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_name = checkpoint_name
+        self.next_save = save_every
+
+    def _on_training_start(self) -> None:
+        if self.save_every > 0:
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.save_every <= 0 or self.num_timesteps < self.next_save:
+            return True
+
+        save_path = os.path.join(
+            self.checkpoint_dir,
+            f"{self.checkpoint_name}_{self.num_timesteps}_steps",
+        )
+        self.model.save(save_path)
+        print(f"[checkpoint] saved {save_path}.zip")
+        while self.next_save <= self.num_timesteps:
+            self.next_save += self.save_every
+        return True
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train PPO tracker with ground-truth target pose.")
     parser.add_argument("--timesteps", type=int, default=200_000)
     parser.add_argument("--load-path", default=None)
     parser.add_argument("--save-path", default="../models/ppo_franka_tracker")
+    parser.add_argument("--checkpoint-dir", default="../models/checkpoints")
+    parser.add_argument("--checkpoint-every", type=int, default=200_000)
+    parser.add_argument("--checkpoint-name", default=None)
     parser.add_argument("--log-dir", default="../runs/ppo_franka_tracker")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--trajectory-mode", choices=["circle", "lissajous", "mixed"], default="mixed")
@@ -254,16 +285,36 @@ def main():
             learning_rate=3e-4,
             clip_range=0.2,
         )
-    callback = PeriodicTrainingPrinter(args.print_every)
-    model.learn(
-        total_timesteps=args.timesteps,
-        progress_bar=args.progress_bar,
-        callback=callback,
-        reset_num_timesteps=args.load_path is None,
-    )
-    model.save(args.save_path)
-    env.close()
-    print(f"Saved PPO tracker to {args.save_path}.zip")
+
+    checkpoint_name = args.checkpoint_name
+    if checkpoint_name is None:
+        checkpoint_name = os.path.basename(args.save_path.rstrip(os.sep))
+
+    callback = CallbackList([
+        PeriodicTrainingPrinter(args.print_every),
+        PeriodicCheckpointSaver(
+            save_every=args.checkpoint_every,
+            checkpoint_dir=args.checkpoint_dir,
+            checkpoint_name=checkpoint_name,
+        ),
+    ])
+
+    try:
+        model.learn(
+            total_timesteps=args.timesteps,
+            progress_bar=args.progress_bar,
+            callback=callback,
+            reset_num_timesteps=args.load_path is None,
+        )
+    except KeyboardInterrupt:
+        interrupted_path = f"{args.save_path}_interrupted"
+        model.save(interrupted_path)
+        print(f"\nInterrupted. Saved latest model to {interrupted_path}.zip")
+    else:
+        model.save(args.save_path)
+        print(f"Saved PPO tracker to {args.save_path}.zip")
+    finally:
+        env.close()
 
 
 if __name__ == "__main__":
