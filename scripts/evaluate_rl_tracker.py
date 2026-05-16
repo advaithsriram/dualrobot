@@ -1,4 +1,4 @@
-"""Evaluate a trained PPO policy in the Stage 1 ground-truth environment."""
+"""Evaluate a trained PPO policy in the vision-based tracking environment."""
 
 import argparse
 import os
@@ -6,11 +6,29 @@ import os
 import numpy as np
 from stable_baselines3 import PPO
 
-from rl.tracking_env import FrankaGroundTruthTrackingEnv
+from rl.tracking_env import FrankaVisionTrackingEnv
+
+
+NOISE_PROFILES = {
+    "none": (0.0, 0.0, 0.0),
+    "mild": (2.0, 0.01, 0.05),
+    "moderate": (4.0, 0.02, 0.10),
+}
+
+
+def resolve_noise_args(args):
+    pixel_std, depth_std, dropout_prob = NOISE_PROFILES[args.noise_profile]
+    if args.vision_pixel_noise_std is not None:
+        pixel_std = args.vision_pixel_noise_std
+    if args.vision_depth_noise_std is not None:
+        depth_std = args.vision_depth_noise_std
+    if args.vision_dropout_prob is not None:
+        dropout_prob = args.vision_dropout_prob
+    return pixel_std, depth_std, dropout_prob
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate PPO tracker with ground-truth target pose.")
+    parser = argparse.ArgumentParser(description="Evaluate a vision-based PPO tracker.")
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--render", action="store_true")
@@ -21,9 +39,10 @@ def parse_args():
     parser.add_argument("--position-yz-reward-weight", type=float, default=50.0)
     parser.add_argument("--velocity-x-reward-weight", type=float, default=1.0)
     parser.add_argument("--velocity-yz-reward-weight", type=float, default=0.5)
-    parser.add_argument("--vision-pixel-noise-std", type=float, default=0.0)
-    parser.add_argument("--vision-depth-noise-std", type=float, default=0.0)
-    parser.add_argument("--vision-dropout-prob", type=float, default=0.0)
+    parser.add_argument("--noise-profile", choices=list(NOISE_PROFILES), default="none")
+    parser.add_argument("--vision-pixel-noise-std", type=float, default=None)
+    parser.add_argument("--vision-depth-noise-std", type=float, default=None)
+    parser.add_argument("--vision-dropout-prob", type=float, default=None)
     parser.add_argument("--vision-debug", action="store_true")
     parser.add_argument("--vision-debug-every", type=int, default=100)
     parser.add_argument("--env-verbose", action="store_true")
@@ -32,11 +51,19 @@ def parse_args():
 
 def main():
     args = parse_args()
-    if not os.path.exists(args.model_path):
+    (
+        vision_pixel_noise_std,
+        vision_depth_noise_std,
+        vision_dropout_prob,
+    ) = resolve_noise_args(args)
+    model_path = args.model_path
+    if not os.path.exists(model_path) and os.path.exists(f"{model_path}.zip"):
+        model_path = f"{model_path}.zip"
+    if not os.path.exists(model_path):
         raise FileNotFoundError(args.model_path)
 
-    model = PPO.load(args.model_path)
-    env = FrankaGroundTruthTrackingEnv(
+    model = PPO.load(model_path)
+    env = FrankaVisionTrackingEnv(
         render_mode="human" if args.render else "direct",
         trajectory_mode=args.trajectory_mode,
         action_mode=args.action_mode,
@@ -45,9 +72,9 @@ def main():
         position_yz_reward_weight=args.position_yz_reward_weight,
         velocity_x_reward_weight=args.velocity_x_reward_weight,
         velocity_yz_reward_weight=args.velocity_yz_reward_weight,
-        vision_pixel_noise_std=args.vision_pixel_noise_std,
-        vision_depth_noise_std=args.vision_depth_noise_std,
-        vision_dropout_prob=args.vision_dropout_prob,
+        vision_pixel_noise_std=vision_pixel_noise_std,
+        vision_depth_noise_std=vision_depth_noise_std,
+        vision_dropout_prob=vision_dropout_prob,
         vision_debug=args.vision_debug,
         vision_debug_every=args.vision_debug_every,
         quiet=not args.env_verbose,

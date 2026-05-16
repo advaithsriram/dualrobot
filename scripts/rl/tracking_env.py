@@ -1,4 +1,4 @@
-"""Ground-truth PyBullet tracking environment for Stage 1 RL."""
+"""Vision-feature PyBullet tracking environment for PPO end-effector tracking."""
 
 from __future__ import annotations
 
@@ -52,8 +52,8 @@ def suppress_native_output(enabled: bool):
             os.close(stderr_fd)
 
 
-class FrankaGroundTruthTrackingEnv(gym.Env):
-    """Train Franka to track the UR5-held target using true target pose."""
+class FrankaVisionTrackingEnv(gym.Env):
+    """Train Franka to track the UR5-held target from compact vision features."""
 
     metadata = {"render_modes": ["human", "direct"], "render_fps": 60}
 
@@ -511,3 +511,7 @@ class FrankaGroundTruthTrackingEnv(gym.Env):
                 ),
             ]
         ).astype(np.float32)
+
+
+# Backward-compatible alias for older scripts/checkpoints/documentation.
+FrankaGroundTruthTrackingEnv = FrankaVisionTrackingEnv

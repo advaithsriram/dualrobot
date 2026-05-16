@@ -1,4 +1,4 @@
-"""Train a PPO policy for ground-truth 3D end-effector tracking."""
+"""Train a PPO policy for vision-based 3D end-effector tracking."""
 
 import argparse
 import os
@@ -9,7 +9,25 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from rl.tracking_env import FrankaGroundTruthTrackingEnv
+from rl.tracking_env import FrankaVisionTrackingEnv
+
+
+NOISE_PROFILES = {
+    "none": (0.0, 0.0, 0.0),
+    "mild": (2.0, 0.01, 0.05),
+    "moderate": (4.0, 0.02, 0.10),
+}
+
+
+def resolve_noise_args(args):
+    pixel_std, depth_std, dropout_prob = NOISE_PROFILES[args.noise_profile]
+    if args.vision_pixel_noise_std is not None:
+        pixel_std = args.vision_pixel_noise_std
+    if args.vision_depth_noise_std is not None:
+        depth_std = args.vision_depth_noise_std
+    if args.vision_dropout_prob is not None:
+        dropout_prob = args.vision_dropout_prob
+    return pixel_std, depth_std, dropout_prob
 
 
 class PeriodicTrainingPrinter(BaseCallback):
@@ -174,7 +192,7 @@ class PeriodicCheckpointSaver(BaseCallback):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train PPO tracker with ground-truth target pose.")
+    parser = argparse.ArgumentParser(description="Train a vision-based PPO tracker.")
     parser.add_argument("--timesteps", type=int, default=200_000)
     parser.add_argument("--load-path", default=None)
     parser.add_argument("--save-path", default="../models/ppo_franka_tracker")
@@ -194,9 +212,10 @@ def parse_args():
     parser.add_argument("--position-yz-reward-weight", type=float, default=50.0)
     parser.add_argument("--velocity-x-reward-weight", type=float, default=1.0)
     parser.add_argument("--velocity-yz-reward-weight", type=float, default=0.5)
-    parser.add_argument("--vision-pixel-noise-std", type=float, default=0.0)
-    parser.add_argument("--vision-depth-noise-std", type=float, default=0.0)
-    parser.add_argument("--vision-dropout-prob", type=float, default=0.0)
+    parser.add_argument("--noise-profile", choices=list(NOISE_PROFILES), default="none")
+    parser.add_argument("--vision-pixel-noise-std", type=float, default=None)
+    parser.add_argument("--vision-depth-noise-std", type=float, default=None)
+    parser.add_argument("--vision-dropout-prob", type=float, default=None)
     parser.add_argument("--vision-debug", action="store_true")
     parser.add_argument("--vision-debug-every", type=int, default=100)
     return parser.parse_args()
@@ -219,7 +238,7 @@ def make_env(
     vision_debug_every,
 ):
     def _factory():
-        env = FrankaGroundTruthTrackingEnv(
+        env = FrankaVisionTrackingEnv(
             render_mode=render_mode,
             trajectory_mode=trajectory_mode,
             action_mode=action_mode,
@@ -242,7 +261,14 @@ def make_env(
 
 def main():
     args = parse_args()
-    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    (
+        vision_pixel_noise_std,
+        vision_depth_noise_std,
+        vision_dropout_prob,
+    ) = resolve_noise_args(args)
+    save_dir = os.path.dirname(args.save_path)
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
     os.makedirs(args.log_dir, exist_ok=True)
 
     render_mode = "human" if args.render else "direct"
@@ -257,9 +283,9 @@ def main():
             position_yz_reward_weight=args.position_yz_reward_weight,
             velocity_x_reward_weight=args.velocity_x_reward_weight,
             velocity_yz_reward_weight=args.velocity_yz_reward_weight,
-            vision_pixel_noise_std=args.vision_pixel_noise_std,
-            vision_depth_noise_std=args.vision_depth_noise_std,
-            vision_dropout_prob=args.vision_dropout_prob,
+            vision_pixel_noise_std=vision_pixel_noise_std,
+            vision_depth_noise_std=vision_depth_noise_std,
+            vision_dropout_prob=vision_dropout_prob,
             vision_debug=args.vision_debug,
             vision_debug_every=args.vision_debug_every,
         )
