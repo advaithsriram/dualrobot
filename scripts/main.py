@@ -20,7 +20,7 @@ import argparse
 # Import robot modules
 import robotB
 import vision_processor
-from controllers.franka_policies import PIDTrackingPolicy, PPOTrackingPolicy
+from controllers.franka_policies import PDTrackingPolicy, PPOTrackingPolicy
 
 CAMERA_FREQ = 30.0  # Camera update frequency in Hz
 SIM_HZ = 120.0     # Simulation frequency in Hz
@@ -134,7 +134,7 @@ class RobotBController:
         image_queue=None,
         result_queue=None,
         target_body_id=None,
-        control_mode="pid",
+        control_mode="pd",
         trajectory_points=200,
         observation_mode="vision",
     ):
@@ -178,13 +178,13 @@ class RobotBController:
         """Execute one control step for Franka."""
 
         needs_camera_detection = (
-            self.control_mode == "pid"
+            self.control_mode == "pd"
             or (self.control_mode == "rl" and self.observation_mode == "vision")
         )
 
         if needs_camera_detection and self.frame_counter % 4 == 0:
             rgb_image, depth_array = robotB.get_camera_image(self.robot_id, self.ee_link)
-            if self.control_mode == "pid" and self.image_queue is not None:
+            if self.control_mode == "pd" and self.image_queue is not None:
                 try:
                     self.image_queue.put_nowait((rgb_image, depth_array))
                 except:
@@ -210,7 +210,7 @@ class RobotBController:
                     "timestamp": time.time(),
                 }
 
-        if self.control_mode == "pid" and self.result_queue is not None:
+        if self.control_mode == "pd" and self.result_queue is not None:
             try:
                 while not self.result_queue.empty():
                     self.latest_detection = self.result_queue.get_nowait()
@@ -258,10 +258,10 @@ class RobotBController:
                     )
 
             if self.frame_counter % 60 == 0:
-                if self.control_mode == "pid":
+                if self.control_mode == "pd":
                     pixel_error = command.debug.get("pixel_error", (0.0, 0.0))
                     depth_error = command.debug.get("depth_error", 0.0)
-                    print(f"[Tracking:PID] Pixel error: ({pixel_error[0]:.1f}, {pixel_error[1]:.1f}) px, "
+                    print(f"[Tracking:PD] Pixel error: ({pixel_error[0]:.1f}, {pixel_error[1]:.1f}) px, "
                           f"Depth error: {depth_error*1000:.1f} mm, "
                           f"Delta: ({delta_world_frame[0]*1000:.1f}, {delta_world_frame[1]*1000:.1f}, "
                           f"{delta_world_frame[2]*1000:.1f}) mm")
@@ -532,8 +532,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Dual robot tracking simulation")
     parser.add_argument(
         "--control-mode",
-        choices=["pid", "rl"],
-        default="pid",
+        choices=["pd", "rl"],
+        default="pd",
         help="Tracking policy for the Franka controller.",
     )
     parser.add_argument(
@@ -704,7 +704,7 @@ def main():
     vision_process = None
     image_queue = None
     result_queue = None
-    if args.control_mode == "pid":
+    if args.control_mode == "pd":
         print("\n" + "="*70)
         print("STARTING VISION PROCESSOR")
         print("="*70)
@@ -714,7 +714,7 @@ def main():
             debug=False
         )
         print("✓ Vision processor started in separate process\n")
-        tracking_policy = PIDTrackingPolicy(robotB.CAMERA_WIDTH, robotB.CAMERA_HEIGHT)
+        tracking_policy = PDTrackingPolicy(robotB.CAMERA_WIDTH, robotB.CAMERA_HEIGHT)
     else:
         print("\n" + "="*70)
         print("LOADING PPO TRACKING POLICY")

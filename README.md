@@ -1,16 +1,16 @@
 # Learning-Based Dual-Robot 3D End-Effector Tracking
 
-This project implements a simulated dual-robot tracking system in PyBullet. A UR5 robot picks up a red target object and moves it along a time-varying 3D trajectory. A Franka Panda then tracks that moving target using either a visual-servoing PID baseline or a PPO reinforcement-learning policy.
+This project implements a simulated dual-robot tracking system in PyBullet. A UR5 robot picks up a red target object and moves it along a time-varying 3D trajectory. A Franka Panda then tracks that moving target using either a visual-servoing PD baseline or a PPO reinforcement-learning policy.
 
-The core task is continuous end-effector trajectory tracking, not single-point reaching. The Franka must track a moving Cartesian trajectory smoothly over time while keeping position error low.
+The core task is to continuously and smoothly track the end-effector trajectory while keeping position error low.
 
 ## Task Summary
 
 | Requirement | Implementation |
 | --- | --- |
 | Standard simulated arm | UR5 and Franka Panda in PyBullet |
-| Time-varying Cartesian trajectory | Circle and Lissajous/figure-eight motion in Y-Z, with sinusoidal X motion |
-| RL as core component | PPO policy controls Franka Cartesian displacement commands |
+| Time-varying Cartesian trajectory | Alternating Circle and Lissajous/figure-eight motion in Y-Z, with sinusoidal X motion |
+| RL | PPO policy controls Franka Cartesian displacement commands |
 | Smooth, stable motion | Velocity matching, action magnitude penalty, and action-change penalty |
 | Source of uncertainty | Optional visual pixel noise, depth noise, and detection dropout |
 | Evaluation | RMSE and MAE for 3D, X-relative, Y, Z, and Y-Z errors |
@@ -24,10 +24,10 @@ The core task is continuous end-effector trajectory tracking, not single-point r
 
 - **Robot B: Franka Panda**
   - Tracks the UR5-held target.
-  - Can run the PID baseline or the trained PPO policy.
+  - Can run the PD baseline or the trained PPO policy.
   - Uses IK to convert Cartesian displacement commands into joint targets.
 
-The robots are separated along the world X axis. For this reason, X tracking is evaluated using **relative displacement**, not absolute world X position. This matches the PID baseline: the Franka should reproduce the UR5 target's sinusoidal X motion while preserving the initial distance between the two robots.
+The robots are separated along the world X axis. For this reason, X tracking is evaluated using **relative displacement**, not absolute world X position. This matches the PD baseline: the Franka should reproduce the UR5 target's sinusoidal X motion while preserving the initial distance between the two robots.
 
 ## Repository Structure
 
@@ -40,10 +40,10 @@ scripts/
   train_rl_tracker.py             # PPO training entry point
   evaluate_rl_tracker.py          # PPO evaluation entry point
   controllers/
-    franka_policies.py            # PID and PPO policy wrappers
+    franka_policies.py            # PD and PPO policy wrappers
   rl/
     tracking_env.py               # Gymnasium/PyBullet RL environment
-  baselines/pid/                  # Frozen PID baseline snapshot
+  baselines/pd/                   # Frozen PD baseline snapshot
 
 models/
   curriculum_model_rl_yz.zip      # Midway curriculum policy: Y-Z tracking only
@@ -80,10 +80,10 @@ cd scripts
 
 ## Quick Start
 
-Run the PID baseline:
+Run the PD baseline:
 
 ```bash
-python main.py --control-mode pid
+python main.py --control-mode pd
 ```
 
 Run the final RL policy in the full dual-robot simulator:
@@ -137,14 +137,14 @@ The UR5 trajectory is precomputed with PyBullet inverse kinematics before execut
 
 ## Controllers
 
-### PID Baseline
+### PD Baseline
 
-The PID baseline uses the Franka wrist camera to detect the red target object. HSV color thresholding finds the target centroid in the RGB image, and the depth image provides the target depth. Pixel/depth error is converted to a Cartesian correction, then IK converts the Cartesian target into Franka joint commands.
+The PD baseline uses the Franka wrist camera to detect the red target object. HSV color thresholding finds the target centroid in the RGB image, and the depth image provides the target depth. Pixel/depth error is converted to a Cartesian correction, then IK converts the Cartesian target into Franka joint commands.
 
-The frozen PID baseline snapshot is preserved under:
+The frozen PD baseline snapshot is preserved under:
 
 ```text
-scripts/baselines/pid/
+scripts/baselines/pd/
 ```
 
 ### PPO RL Controller
@@ -427,7 +427,7 @@ Suggested results to include:
 
 | Controller | Key Metrics |
 | --- | --- |
-| PID baseline | X-relative, Y, Z, and Y-Z RMSE/MAE |
+| PD baseline | X-relative, Y, Z, and Y-Z RMSE/MAE |
 | RL Y-Z curriculum model | Y-Z RMSE/MAE |
 | RL final XYZ model | X-relative, Y, Z, Y-Z, and 3D RMSE/MAE |
 
@@ -439,7 +439,7 @@ The Y-Z curriculum model is useful for showing that PPO can learn high-accuracy 
 - IK is used to convert Cartesian targets into Franka joint targets.
 - Orientation tracking is not included.
 - Raw image RL is not used; compact vision features are used for sample efficiency.
-- The PID baseline remains useful as a non-learning comparison for the same tracking task.
+- The PD baseline remains useful as a non-learning comparison for the same tracking task.
 
 ## License
 

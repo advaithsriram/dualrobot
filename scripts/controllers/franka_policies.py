@@ -27,8 +27,8 @@ class BaseTrackingPolicy:
         raise NotImplementedError
 
 
-class PIDTrackingPolicy(BaseTrackingPolicy):
-    """Frozen visual-servoing PID baseline behavior from the original controller."""
+class PDTrackingPolicy(BaseTrackingPolicy):
+    """Frozen visual-servoing PD baseline behavior from the original controller."""
 
     def __init__(
         self,
