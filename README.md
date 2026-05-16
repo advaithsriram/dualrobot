@@ -4,6 +4,8 @@ This project implements a simulated dual-robot tracking system in PyBullet. A UR
 
 The core task is to continuously and smoothly track the end-effector trajectory while keeping position error low.
 
+The final plots and videos can be found in `graphs/` and `videos/`.
+
 ## Task Summary
 
 | Requirement | Implementation |
@@ -12,8 +14,8 @@ The core task is to continuously and smoothly track the end-effector trajectory 
 | Time-varying Cartesian trajectory | Alternating Circle and Lissajous/figure-eight motion in Y-Z, with sinusoidal X motion |
 | RL | PPO policy controls Franka Cartesian displacement commands |
 | Smooth, stable motion | Velocity matching, action magnitude penalty, and action-change penalty |
-| Source of uncertainty | Optional visual pixel noise, depth noise, and detection dropout |
-| Evaluation | RMSE and MAE for 3D, X-relative, Y, Z, and Y-Z errors |
+| Source of uncertainty | Optional visual pixel noise, depth noise, and detection dropout, evaluated after training |
+| Evaluation | RMSE and MAE along X, Y, and Z axes |
 
 ## System Overview
 
@@ -111,8 +113,6 @@ python evaluate_rl_tracker.py \
   --action-mode yz
 ```
 
-The RL observation mode defaults to `vision`. The PPO observation space is always the 17-D vision feature vector; the old 20-D ground-truth observation path is not used.
-
 ## Target Trajectory
 
 After pickup, the UR5 target follows two alternating patterns in the Y-Z plane: a circle and a Lissajous/figure-eight curve. Both are combined with sinusoidal motion along X.
@@ -141,7 +141,7 @@ The UR5 trajectory is precomputed with PyBullet inverse kinematics before execut
 
 The PD baseline uses the Franka wrist camera to detect the red target object. HSV color thresholding finds the target centroid in the RGB image, and the depth image provides the target depth. Pixel/depth error is converted to a Cartesian correction, then IK converts the Cartesian target into Franka joint commands.
 
-The frozen PD baseline snapshot is preserved under:
+The PD baseline parameters were tuned and preserved under:
 
 ```text
 scripts/baselines/pd/
@@ -195,7 +195,7 @@ previous action             3
 trajectory phase sin/cos    2
 ```
 
-The policy does not observe the ground-truth target position. Ground truth is used only inside simulation for reward calculation and evaluation metrics.
+The ground truth is used only inside simulation for reward calculation and evaluation metrics.
 
 ## Action Space
 
@@ -217,7 +217,7 @@ Then applied as:
 target_ee_position = current_ee_position + action_scale * action
 ```
 
-The environment supports three action modes:
+The environment supports three modes:
 
 | Mode | Meaning |
 | --- | --- |
@@ -320,12 +320,6 @@ python train_rl_tracker.py \
   --print-every 25000
 ```
 
-Checkpoints are saved every 200,000 timesteps by default under `models/checkpoints/`. If training is interrupted with `Ctrl+C`, the latest model is saved as:
-
-```text
-<save-path>_interrupted.zip
-```
-
 ## Uncertainty and Robustness
 
 The environment can inject uncertainty into the visual observations:
@@ -338,7 +332,7 @@ The environment can inject uncertainty into the visual observations:
 
 `--noise-profile mild` adds Gaussian pixel noise with standard deviation `2 px`, Gaussian depth noise with standard deviation `0.01 m`, and a 5% detection dropout probability.
 
-Train with visual uncertainty:
+Training and evaluating with visual uncertainty:
 
 ```bash
 python train_rl_tracker.py \
@@ -350,8 +344,6 @@ python train_rl_tracker.py \
   --print-every 25000
 ```
 
-Evaluate with visual uncertainty:
-
 ```bash
 python evaluate_rl_tracker.py \
   --model-path ../models/final_model_rl_xyz.zip \
@@ -359,87 +351,11 @@ python evaluate_rl_tracker.py \
   --noise-profile mild
 ```
 
-For custom uncertainty values, use:
-
-```bash
---vision-pixel-noise-std 2.0
---vision-depth-noise-std 0.01
---vision-dropout-prob 0.05
-```
-
-## TensorBoard
-
-Start TensorBoard from `scripts/`:
-
-```bash
-tensorboard --logdir ../runs
-```
-
-Useful scalars:
-
-```text
-tracking/error_m
-tracking/error_x_relative_m
-tracking/error_x_world_m
-tracking/error_yz_m
-tracking/velocity_error_x_mps
-tracking/velocity_error_yz_mps
-tracking/step_reward
-vision/detected
-vision/area_norm
-rollout/ep_rew_mean
-```
-
-For full 3D tracking quality, use `tracking/error_x_relative_m`, not `tracking/error_x_world_m`.
-
 ## Evaluation Metrics
 
-Evaluation is performed with:
-
-```bash
-python evaluate_rl_tracker.py \
-  --model-path ../models/final_model_rl_xyz.zip \
-  --action-mode xyz
-```
-
-The evaluator reports:
-
-```text
-3D RMSE / MAE
-X-relative RMSE / MAE
-X-world RMSE / MAE
-Y RMSE / MAE
-Z RMSE / MAE
-Y-Z RMSE / MAE
-```
-
-Primary metrics:
-
-- **Y-Z RMSE/MAE:** planar trajectory tracking quality.
 - **X-relative RMSE/MAE:** sinusoidal X tracking while maintaining inter-robot spacing.
-- **3D RMSE/MAE:** combined tracking error using relative X and direct Y/Z errors.
-
-## Example Results
-
-Final plots and videos can be added under `graphs/` and `videos/`.
-
-Suggested results to include:
-
-| Controller | Key Metrics |
-| --- | --- |
-| PD baseline | X-relative, Y, Z, and Y-Z RMSE/MAE |
-| RL Y-Z curriculum model | Y-Z RMSE/MAE |
-| RL final XYZ model | X-relative, Y, Z, Y-Z, and 3D RMSE/MAE |
-
-The Y-Z curriculum model is useful for showing that PPO can learn high-accuracy planar tracking. The final XYZ model demonstrates the complete 3D objective, including relative X motion.
-
-## Notes
-
-- The policy controls Cartesian position increments, not torques.
-- IK is used to convert Cartesian targets into Franka joint targets.
-- Orientation tracking is not included.
-- Raw image RL is not used; compact vision features are used for sample efficiency.
-- The PD baseline remains useful as a non-learning comparison for the same tracking task.
+- **Y RMSE/MAE:** horizontal tracking error in the Y-Z plane.
+- **Z RMSE/MAE:** vertical tracking error in the Y-Z plane.
 
 ## License
 
