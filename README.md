@@ -6,6 +6,9 @@ The core task is to continuously and smoothly track the end-effector trajectory 
 
 The final plots and videos can be found in `graphs/` and `videos/`.
 
+Please find the technical report for this project here:
+[`Technical_Report_Humanoid_Challenge.pdf`](Technical_Report_Humanoid_Challenge.pdf).
+
 ## Task Summary
 
 | Requirement | Implementation |
